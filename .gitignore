@@ -1,0 +1,11 @@
+build/
+JUCE/
+*.user
+*.suo
+*.sdf
+*.opensdf
+*.vcxproj*
+*.xcodeproj/
+*.xcworkspace/
+.DS_Store
+Thumbs.db
