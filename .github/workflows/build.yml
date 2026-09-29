@@ -36,6 +36,29 @@ jobs:
           name: ArpExcel-AU-macOS
           path: build/ArpExcel_artefacts/Release/AU/ArpExcel.component
 
+  release-macos:
+    needs: build-macos
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'
+    steps:
+      - name: Download macOS artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create macOS Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: macos-v${{ github.run_number }}
+          name: ArpExcel macOS v${{ github.run_number }}
+          files: |
+            artifacts/ArpExcel-VST3-macOS/ArpExcel.vst3
+            artifacts/ArpExcel-AU-macOS/ArpExcel.component
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   build-windows:
     runs-on: windows-latest
     steps:
@@ -56,24 +79,22 @@ jobs:
           name: ArpExcel-VST3-Windows
           path: build/ArpExcel_artefacts/Release/VST3/ArpExcel.vst3
 
-  release:
-    needs: [build-macos, build-windows]
+  release-windows:
+    needs: build-windows
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'
     steps:
-      - name: Download all artifacts
+      - name: Download Windows artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
 
-      - name: Create Release
+      - name: Create Windows Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ github.run_number }}
-          name: ArpExcel v${{ github.run_number }}
+          tag_name: windows-v${{ github.run_number }}
+          name: ArpExcel Windows v${{ github.run_number }}
           files: |
-            artifacts/ArpExcel-VST3-macOS/ArpExcel.vst3
-            artifacts/ArpExcel-AU-macOS/ArpExcel.component
             artifacts/ArpExcel-VST3-Windows/ArpExcel.vst3
           draft: false
           prerelease: false
