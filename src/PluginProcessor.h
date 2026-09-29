@@ -37,6 +37,7 @@ public:
 
     // Parameters
     juce::AudioProcessorValueTreeState& getAPVTS() { return apvts_; }
+    static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
 private:
     arp::Arpeggiator arpeggiator_;
