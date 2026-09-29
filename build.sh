@@ -15,7 +15,7 @@ cd build
 
 # Configure
 echo "Configuring with CMake..."
-cmake .. -DCMAKE_BUILD_TYPE=Release
+cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release
 
 # Build
 echo "Building..."

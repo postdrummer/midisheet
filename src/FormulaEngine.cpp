@@ -67,7 +67,7 @@ juce::String FormulaEngine::rowColToCell(int row, int col) {
     col++; // 1-indexed
     while (col > 0) {
         int rem = (col - 1) % 26;
-        result = juce::String::charToString(static_cast<juce::char>('A' + rem)) + result;
+        result = juce::String::charToString(static_cast<juce::juce_wchar>('A' + rem)) + result;
         col = (col - 1) / 26;
     }
     return result + juce::String(row + 1);

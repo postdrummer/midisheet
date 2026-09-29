@@ -116,7 +116,7 @@ void ArpPattern::fromVar(const juce::var& v) {
         auto* arr = v.getArray();
         numSteps = juce::jlimit(1, MAX_STEPS, static_cast<int>(arr->size()));
         for (int i = 0; i < numSteps && i < arr->size(); i++) {
-            auto* obj = arr->getObjectPointer(i);
+            auto* obj = arr->getReference(i).getDynamicObject();
             if (obj) {
                 steps_[i].noteFormula = obj->getProperty("noteFormula");
                 steps_[i].velocityFormula = obj->getProperty("velocityFormula");

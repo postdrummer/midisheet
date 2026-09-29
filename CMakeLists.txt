@@ -2,19 +2,8 @@ cmake_minimum_required(VERSION 3.22)
 
 project(ArpExcel VERSION 1.0.0)
 
-# Auto-fetch JUCE if not present
-if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/JUCE/CMakeLists.txt")
-    message(STATUS "JUCE not found, fetching from GitHub...")
-    include(FetchContent)
-    FetchContent_Declare(JUCE
-        GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
-        GIT_TAG 8.0.4
-        GIT_SHALLOW TRUE
-    )
-    FetchContent_MakeAvailable(JUCE)
-else()
-    add_subdirectory(JUCE)
-endif()
+# Find JUCE
+add_subdirectory(JUCE)
 
 # Plugin target
 juce_add_plugin(ArpExcel

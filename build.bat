@@ -13,7 +13,7 @@ cd build
 
 REM Configure
 echo Configuring with CMake...
-cmake .. -DCMAKE_BUILD_TYPE=Release
+cmake .. -G "Visual Studio 17 2022" -A x64
 
 REM Build
 echo Building...
