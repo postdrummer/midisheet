@@ -45,6 +45,8 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+          pattern: ArpExcel-*-macOS
+          merge-multiple: true
 
       - name: Create macOS Release
         uses: softprops/action-gh-release@v2
@@ -52,8 +54,8 @@ jobs:
           tag_name: macos-v${{ github.run_number }}
           name: ArpExcel macOS v${{ github.run_number }}
           files: |
-            artifacts/ArpExcel-VST3-macOS/ArpExcel.vst3
-            artifacts/ArpExcel-AU-macOS/ArpExcel.component
+            artifacts/ArpExcel.vst3
+            artifacts/ArpExcel.component
           draft: false
           prerelease: false
         env:
@@ -88,6 +90,8 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+          pattern: ArpExcel-VST3-Windows
+          merge-multiple: true
 
       - name: Create Windows Release
         uses: softprops/action-gh-release@v2
@@ -95,7 +99,7 @@ jobs:
           tag_name: windows-v${{ github.run_number }}
           name: ArpExcel Windows v${{ github.run_number }}
           files: |
-            artifacts/ArpExcel-VST3-Windows/ArpExcel.vst3
+            artifacts/ArpExcel.vst3
           draft: false
           prerelease: false
         env:
