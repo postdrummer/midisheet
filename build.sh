@@ -3,17 +3,11 @@ set -e
 
 echo "=== ArpExcel Build Script (macOS/Linux) ==="
 
-# Initialize JUCE submodule if not already done
-if [ ! -d "JUCE/.git" ]; then
-    echo "Initializing JUCE submodule..."
-    git submodule update --init --recursive
-fi
-
 # Create build directory
 mkdir -p build
 cd build
 
-# Configure
+# Configure (JUCE is fetched automatically via FetchContent)
 echo "Configuring with CMake..."
 cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release
 

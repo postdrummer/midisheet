@@ -2,8 +2,14 @@ cmake_minimum_required(VERSION 3.22)
 
 project(ArpExcel VERSION 1.0.0)
 
-# Find JUCE
-add_subdirectory(JUCE)
+# Fetch JUCE automatically
+include(FetchContent)
+FetchContent_Declare(JUCE
+    GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
+    GIT_TAG 8.0.4
+    GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(JUCE)
 
 # Plugin target
 juce_add_plugin(ArpExcel

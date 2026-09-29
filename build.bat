@@ -1,17 +1,11 @@
 @echo off
 echo === ArpExcel Build Script (Windows) ===
 
-REM Initialize JUCE submodule if not already done
-if not exist "JUCE\.git" (
-    echo Initializing JUCE submodule...
-    git submodule update --init --recursive
-)
-
 REM Create build directory
 if not exist build mkdir build
 cd build
 
-REM Configure
+REM Configure (JUCE is fetched automatically via FetchContent)
 echo Configuring with CMake...
 cmake .. -G "Visual Studio 17 2022" -A x64
 
