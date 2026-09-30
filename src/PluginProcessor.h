@@ -6,10 +6,10 @@
 #include "engine/ArpEngine.h"
 #include "engine/PatternExchange.h"
 
-class ArpExcelAudioProcessor : public juce::AudioProcessor {
+class MidisheetAudioProcessor : public juce::AudioProcessor {
 public:
-    ArpExcelAudioProcessor();
-    ~ArpExcelAudioProcessor() override;
+    MidisheetAudioProcessor();
+    ~MidisheetAudioProcessor() override;
 
     void prepareToPlay(double sampleRate, int samplesPerBlock) override;
     void releaseResources() override;
@@ -19,7 +19,7 @@ public:
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
 
-    const juce::String getName() const override { return "ArpExcel"; }
+    const juce::String getName() const override { return "Midisheet"; }
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return true; }
     bool isMidiEffect() const override { return true; }
@@ -60,5 +60,5 @@ private:
     std::atomic<int> playingStep_{-1};
     juce::AudioProcessorValueTreeState apvts_;
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ArpExcelAudioProcessor)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MidisheetAudioProcessor)
 };

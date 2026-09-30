@@ -1,5 +1,5 @@
 @echo off
-echo === ArpExcel Build Script (Windows) ===
+echo === Midisheet Build Script (Windows) ===
 
 REM Create build directory
 if not exist build mkdir build
@@ -16,5 +16,5 @@ cmake --build . --config Release
 echo.
 echo === Build Complete ===
 echo Plugin locations:
-echo   VST3: build\ArpExcel_artefacts\Release\VST3\ArpExcel.vst3
-echo   Standalone: build\ArpExcel_artefacts\Release\Standalone\ArpExcel.exe
+echo   VST3: build\Midisheet_artefacts\Release\VST3\Midisheet.vst3
+echo   Standalone: build\Midisheet_artefacts\Release\Standalone\Midisheet.exe

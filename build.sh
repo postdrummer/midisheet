@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-echo "=== ArpExcel Build Script (macOS/Linux) ==="
+echo "=== Midisheet Build Script (macOS/Linux) ==="
 
 # Create build directory
 mkdir -p build
@@ -18,6 +18,6 @@ cmake --build . --config Release -j$(sysctl -n hw.ncpu 2>/dev/null || echo 4)
 echo ""
 echo "=== Build Complete ==="
 echo "Plugin locations:"
-echo "  VST3: build/ArpExcel_artefacts/Release/VST3/ArpExcel.vst3"
-echo "  AU:   build/ArpExcel_artefacts/Release/AU/ArpExcel.component"
-echo "  Standalone: build/ArpExcel_artefacts/Release/Standalone/ArpExcel.app"
+echo "  VST3: build/Midisheet_artefacts/Release/VST3/Midisheet.vst3"
+echo "  AU:   build/Midisheet_artefacts/Release/AU/Midisheet.component"
+echo "  Standalone: build/Midisheet_artefacts/Release/Standalone/Midisheet.app"

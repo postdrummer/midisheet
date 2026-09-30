@@ -11,22 +11,22 @@ constexpr double kRates[] = {4.0, 2.0, 1.0, 0.5, 0.25, 0.125, 0.0625};
 // AU MIDI FX (Logic) must have no audio buses or auval fails. VST3 has no
 // MIDI-effect category, so hosts like Ableton load it as an instrument and
 // refuse it without an audio output: give VST3 a silent stereo output.
-juce::AudioProcessor::BusesProperties ArpExcelAudioProcessor::makeBuses() {
+juce::AudioProcessor::BusesProperties MidisheetAudioProcessor::makeBuses() {
     if (juce::PluginHostType::getPluginLoadedAs() == wrapperType_VST3)
         return BusesProperties().withOutput("Output", juce::AudioChannelSet::stereo(), true);
     return {};
 }
 
-ArpExcelAudioProcessor::ArpExcelAudioProcessor()
+MidisheetAudioProcessor::MidisheetAudioProcessor()
     : AudioProcessor(makeBuses()),
       apvts_(*this, nullptr, "Parameters", createParameterLayout())
 {
     patternChanged();
 }
 
-ArpExcelAudioProcessor::~ArpExcelAudioProcessor() {}
+MidisheetAudioProcessor::~MidisheetAudioProcessor() {}
 
-juce::AudioProcessorValueTreeState::ParameterLayout ArpExcelAudioProcessor::createParameterLayout() {
+juce::AudioProcessorValueTreeState::ParameterLayout MidisheetAudioProcessor::createParameterLayout() {
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> params;
 
     params.push_back(std::make_unique<juce::AudioParameterBool>(
@@ -57,23 +57,23 @@ juce::AudioProcessorValueTreeState::ParameterLayout ArpExcelAudioProcessor::crea
     return {params.begin(), params.end()};
 }
 
-juce::StringArray ArpExcelAudioProcessor::patternChanged() {
+juce::StringArray MidisheetAudioProcessor::patternChanged() {
     patternErrors_.clear();
     exchange_.publish(pattern_.compile(patternErrors_));
     ++patternVersion_;
     return patternErrors_;
 }
 
-void ArpExcelAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock) {
+void MidisheetAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock) {
     engine_.prepare(sampleRate);
     events_.clear();
     events_.reserve(static_cast<size_t>(std::max(1024, samplesPerBlock)));
     outBuffer_.ensureSize(4096);
 }
 
-void ArpExcelAudioProcessor::releaseResources() {}
+void MidisheetAudioProcessor::releaseResources() {}
 
-void ArpExcelAudioProcessor::syncSettings() {
+void MidisheetAudioProcessor::syncSettings() {
     auto& s = engine_.settings;
     auto raw = [this](const char* id) { return apvts_.getRawParameterValue(id)->load(); };
     s.enabled = raw("enabled") > 0.5f;
@@ -85,7 +85,7 @@ void ArpExcelAudioProcessor::syncSettings() {
     s.swing = raw("swing");
 }
 
-void ArpExcelAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages) {
+void MidisheetAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages) {
     juce::ScopedNoDenormals noDenormals;
     buffer.clear();
     syncSettings();
@@ -128,18 +128,18 @@ void ArpExcelAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
     midiMessages.swapWith(out);
 }
 
-juce::AudioProcessorEditor* ArpExcelAudioProcessor::createEditor() {
-    return new ArpExcelAudioProcessorEditor(*this);
+juce::AudioProcessorEditor* MidisheetAudioProcessor::createEditor() {
+    return new MidisheetAudioProcessorEditor(*this);
 }
 
-void ArpExcelAudioProcessor::getStateInformation(juce::MemoryBlock& destData) {
+void MidisheetAudioProcessor::getStateInformation(juce::MemoryBlock& destData) {
     auto state = apvts_.copyState();
     state.setProperty("pattern", juce::JSON::toString(pattern_.toVar(), true), nullptr);
     if (auto xml = state.createXml())
         copyXmlToBinary(*xml, destData);
 }
 
-void ArpExcelAudioProcessor::setStateInformation(const void* data, int sizeInBytes) {
+void MidisheetAudioProcessor::setStateInformation(const void* data, int sizeInBytes) {
     auto xmlState = getXmlFromBinary(data, sizeInBytes);
     if (xmlState == nullptr || !xmlState->hasTagName(apvts_.state.getType()))
         return;
@@ -153,5 +153,5 @@ void ArpExcelAudioProcessor::setStateInformation(const void* data, int sizeInByt
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter() {
-    return new ArpExcelAudioProcessor();
+    return new MidisheetAudioProcessor();
 }

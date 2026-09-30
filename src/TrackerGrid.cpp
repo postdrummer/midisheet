@@ -23,7 +23,7 @@ juce::Font mono(float size, bool bold = false)
 
 } // namespace
 
-TrackerGrid::TrackerGrid(ArpExcelAudioProcessor& p) : proc(p)
+TrackerGrid::TrackerGrid(MidisheetAudioProcessor& p) : proc(p)
 {
     setWantsKeyboardFocus(true);
     refresh();

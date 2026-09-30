@@ -27,7 +27,7 @@ class TrackerGrid : public juce::Component, private juce::Timer {
 public:
     enum Lane { On, Note, Velocity, Gate, Length, NumLanes };
 
-    explicit TrackerGrid(ArpExcelAudioProcessor&);
+    explicit TrackerGrid(MidisheetAudioProcessor&);
 
     int getRow() const { return row; }
     int getLane() const { return lane; }
@@ -68,7 +68,7 @@ private:
     void undo();
     void redo();
 
-    ArpExcelAudioProcessor& proc;
+    MidisheetAudioProcessor& proc;
     int row = 0, lane = Note, scrollRow = 0;
     int seenVersion = -1, seenStep = -2;
     bool pendingG = false;

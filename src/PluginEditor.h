@@ -4,10 +4,10 @@
 #include "PluginProcessor.h"
 #include "TrackerGrid.h"
 
-class ArpExcelAudioProcessorEditor : public juce::AudioProcessorEditor {
+class MidisheetAudioProcessorEditor : public juce::AudioProcessorEditor {
 public:
-    explicit ArpExcelAudioProcessorEditor(ArpExcelAudioProcessor&);
-    ~ArpExcelAudioProcessorEditor() override;
+    explicit MidisheetAudioProcessorEditor(MidisheetAudioProcessor&);
+    ~MidisheetAudioProcessorEditor() override;
 
     void paint(juce::Graphics&) override;
     void resized() override;
@@ -18,7 +18,7 @@ private:
     void showSelectedCell();
     void commitFormula();
 
-    ArpExcelAudioProcessor& processorRef;
+    MidisheetAudioProcessor& processorRef;
 
     juce::ToggleButton enabledButton;
     juce::ComboBox modeCombo;
@@ -42,5 +42,5 @@ private:
     std::unique_ptr<ComboBoxAttachment> modeAttachment, rateAttachment;
     std::unique_ptr<SliderAttachment> numStepsAttachment, gateAttachment, octaveRangeAttachment, swingAttachment;
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ArpExcelAudioProcessorEditor)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MidisheetAudioProcessorEditor)
 };

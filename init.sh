@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-echo "=== ArpExcel Project Initializer ==="
+echo "=== Midisheet Project Initializer ==="
 
 # Clone JUCE if not present
 if [ ! -d "JUCE" ]; then
@@ -14,7 +14,7 @@ if [ ! -d ".git" ]; then
     echo "Initializing git repo..."
     git init
     git add .
-    git commit -m "Initial commit: ArpExcel VST plugin"
+    git commit -m "Initial commit: Midisheet VST plugin"
 fi
 
 echo ""

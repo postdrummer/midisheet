@@ -6,7 +6,7 @@ const char* const kHint = "hjkl move  i/Enter edit  = or digit: new formula  x c
 
 } // namespace
 
-ArpExcelAudioProcessorEditor::ArpExcelAudioProcessorEditor(ArpExcelAudioProcessor& p)
+MidisheetAudioProcessorEditor::MidisheetAudioProcessorEditor(MidisheetAudioProcessor& p)
     : AudioProcessorEditor(&p), processorRef(p), grid(p)
 {
     auto& apvts = p.getAPVTS();
@@ -74,21 +74,21 @@ ArpExcelAudioProcessorEditor::ArpExcelAudioProcessorEditor(ArpExcelAudioProcesso
     showSelectedCell();
 }
 
-void ArpExcelAudioProcessorEditor::visibilityChanged()
+void MidisheetAudioProcessorEditor::visibilityChanged()
 {
     // Focus can only be taken once the window is on screen.
     if (isShowing() && !formulaBar.hasKeyboardFocus(true))
         grid.grabKeyboardFocus();
 }
 
-void ArpExcelAudioProcessorEditor::parentHierarchyChanged()
+void MidisheetAudioProcessorEditor::parentHierarchyChanged()
 {
     visibilityChanged();
 }
 
-ArpExcelAudioProcessorEditor::~ArpExcelAudioProcessorEditor() {}
+MidisheetAudioProcessorEditor::~MidisheetAudioProcessorEditor() {}
 
-void ArpExcelAudioProcessorEditor::showSelectedCell()
+void MidisheetAudioProcessorEditor::showSelectedCell()
 {
     cellLabel.setText(grid.cellName(), juce::dontSendNotification);
     if (!formulaBar.hasKeyboardFocus(true))
@@ -100,20 +100,20 @@ void ArpExcelAudioProcessorEditor::showSelectedCell()
                           err.isEmpty() ? juce::Colour(0xff646c78) : juce::Colour(0xffff7a59));
 }
 
-void ArpExcelAudioProcessorEditor::commitFormula()
+void MidisheetAudioProcessorEditor::commitFormula()
 {
     grid.setCellFormula(formulaBar.getText());
     showSelectedCell();
 }
 
-void ArpExcelAudioProcessorEditor::paint(juce::Graphics& g) {
+void MidisheetAudioProcessorEditor::paint(juce::Graphics& g) {
     g.fillAll(juce::Colour(0xff111317));
     g.setColour(juce::Colours::white);
     g.setFont(juce::FontOptions(18.0f, juce::Font::bold));
-    g.drawText("ArpExcel", 12, 8, 120, 28, juce::Justification::centredLeft);
+    g.drawText("Midisheet", 12, 8, 120, 28, juce::Justification::centredLeft);
 }
 
-void ArpExcelAudioProcessorEditor::resized() {
+void MidisheetAudioProcessorEditor::resized() {
     auto area = getLocalBounds().reduced(10);
 
     auto row1 = area.removeFromTop(28);

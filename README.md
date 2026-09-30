@@ -1,4 +1,4 @@
-# ArpExcel - VST Arpeggiator with Excel-like Functions
+# Midisheet - VST Arpeggiator with Excel-like Functions
 
 A VST3/AU MIDI arpeggiator plugin built with JUCE that supports Excel-like formulas for pattern generation.
 
@@ -128,7 +128,7 @@ thread without allocating, so they are safe to use on every step.
 ## Project Structure
 
 ```
-ArpExcel/
+Midisheet/
 ├── CMakeLists.txt          # CMake build configuration
 ├── build.sh                # macOS/Linux build script
 ├── build.bat               # Windows build script
