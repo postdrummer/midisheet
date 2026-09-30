@@ -45,6 +45,7 @@ public:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
 private:
+    static BusesProperties makeBuses();
     void syncSettings();
 
     arp::ArpEngine engine_;

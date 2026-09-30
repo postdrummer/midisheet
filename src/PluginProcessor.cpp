@@ -8,8 +8,17 @@ constexpr double kRates[] = {4.0, 2.0, 1.0, 0.5, 0.25, 0.125, 0.0625};
 
 } // namespace
 
+// AU MIDI FX (Logic) must have no audio buses or auval fails. VST3 has no
+// MIDI-effect category, so hosts like Ableton load it as an instrument and
+// refuse it without an audio output: give VST3 a silent stereo output.
+juce::AudioProcessor::BusesProperties ArpExcelAudioProcessor::makeBuses() {
+    if (juce::PluginHostType::getPluginLoadedAs() == wrapperType_VST3)
+        return BusesProperties().withOutput("Output", juce::AudioChannelSet::stereo(), true);
+    return {};
+}
+
 ArpExcelAudioProcessor::ArpExcelAudioProcessor()
-    : AudioProcessor(BusesProperties()), // MIDI effect: no audio buses (required by Logic/auval)
+    : AudioProcessor(makeBuses()),
       apvts_(*this, nullptr, "Parameters", createParameterLayout())
 {
     patternChanged();
