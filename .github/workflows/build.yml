@@ -33,7 +33,7 @@ jobs:
           mkdir -p ~/Library/Audio/Plug-Ins/Components
           cp -R build/Midisheet_artefacts/Release/AU/Midisheet.component ~/Library/Audio/Plug-Ins/Components/
           killall -9 AudioComponentRegistrar || true
-          auval -v aumi ArpX ArpE
+          auval -v aumi Mdsh Mids
 
       - name: Upload VST3
         uses: actions/upload-artifact@v4
