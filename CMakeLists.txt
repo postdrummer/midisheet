@@ -31,7 +31,7 @@ juce_add_plugin(ArpExcel
     NEEDS_MIDI_INPUT TRUE
     NEEDS_MIDI_OUTPUT TRUE
     IS_MIDI_EFFECT TRUE
-    EDITOR_WANTS_KEYBOARD_FOCUS FALSE
+    EDITOR_WANTS_KEYBOARD_FOCUS TRUE
     COPY_PLUGIN_AFTER_BUILD TRUE
     PLUGIN_MANUFACTURER_CODE ArpE
     PLUGIN_CODE ArpX
@@ -46,6 +46,7 @@ target_sources(ArpExcel
         src/PluginProcessor.cpp
         src/PluginEditor.cpp
         src/ArpPattern.cpp
+        src/TrackerGrid.cpp
 )
 
 target_compile_definitions(ArpExcel

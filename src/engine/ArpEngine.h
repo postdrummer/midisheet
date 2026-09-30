@@ -29,6 +29,25 @@ struct Pattern {
     std::array<double, formula::kCellCols * formula::kCellRows> cells{};
 };
 
+struct StepInput {
+    int channel = 1;
+    int pitch = 60;
+    int velocity = 100;
+};
+
+struct StepResult {
+    bool playable = true; // false when the note formula lands outside 0..127
+    int pitch = 60;
+    int velocity = 100;
+    double gate = 0.5;   // fraction of the note length
+    double length = 1.0; // in steps
+};
+
+// Applies a step's formulas to the note the arp picked. Shared by the engine
+// and the editor's preview so both always agree. Real-time safe.
+StepResult evaluateStep(const Pattern&, int patternStep, const StepInput&, int prevNote,
+                        double defaultGate, uint32_t* rng);
+
 enum class Mode { Up, Down, UpDown, DownUp, Random, Order, Chord };
 
 struct Settings {
@@ -73,6 +92,7 @@ public:
     Settings settings;
 
     int heldCount() const { return numHeld; }
+    int lastPatternStep() const { return lastStep; } // -1 before the first step
 
 private:
     struct HeldNote { int channel, pitch, velocity; uint64_t order; };
@@ -106,6 +126,7 @@ private:
     uint64_t arrivalCounter = 0;
     uint64_t sequencePos = 0;
     int prevNote = 0;
+    int lastStep = -1;
     uint32_t rngState = 0x9e3779b9u;
 
     double freePpq = 0.0;

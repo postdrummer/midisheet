@@ -5,6 +5,35 @@
 
 namespace arp {
 
+StepResult evaluateStep(const Pattern& pattern, int patternStep, const StepInput& in, int prevNote,
+                        double defaultGate, uint32_t* rng)
+{
+    const Step& step = pattern.steps[static_cast<size_t>(patternStep)];
+
+    formula::Context ctx;
+    ctx.cells = pattern.cells.data();
+    ctx.rng = rng;
+    ctx.set(formula::Var::Step, patternStep);
+    ctx.set(formula::Var::Note, in.pitch);
+    ctx.set(formula::Var::Velocity, in.velocity);
+    ctx.set(formula::Var::Channel, in.channel);
+    ctx.set(formula::Var::Prev, prevNote);
+    ctx.set(formula::Var::Length, 1.0);
+
+    StepResult r;
+    // Length first so the other formulas can refer to LENGTH.
+    r.length = step.length.empty() ? 1.0 : std::clamp(step.length.eval(ctx), 0.1, 16.0);
+    ctx.set(formula::Var::Length, r.length);
+
+    r.pitch = step.note.empty() ? in.pitch : static_cast<int>(std::lround(step.note.eval(ctx)));
+    r.playable = r.pitch >= 0 && r.pitch <= 127;
+    r.velocity = step.velocity.empty() ? in.velocity : static_cast<int>(std::lround(step.velocity.eval(ctx)));
+    r.velocity = std::clamp(r.velocity, 1, 127);
+    r.gate = step.gate.empty() ? defaultGate : step.gate.eval(ctx) / 100.0; // formula is in %
+    r.gate = std::clamp(r.gate, 0.01, 1.0);
+    return r;
+}
+
 ArpEngine::ArpEngine() = default;
 
 void ArpEngine::prepare(double sr)
@@ -92,30 +121,12 @@ void ArpEngine::buildSequence()
 void ArpEngine::playNote(const SeqNote& src, int patternStep, double stepPpq, int sampleOffset,
                          const Pattern& pattern, std::vector<MidiOut>& out)
 {
-    const Step& step = pattern.steps[static_cast<size_t>(patternStep)];
-
-    formula::Context ctx;
-    ctx.cells = pattern.cells.data();
-    ctx.rng = &rngState;
-    ctx.set(formula::Var::Step, patternStep);
-    ctx.set(formula::Var::Note, src.pitch);
-    ctx.set(formula::Var::Velocity, src.velocity);
-    ctx.set(formula::Var::Channel, src.channel);
-    ctx.set(formula::Var::Prev, prevNote);
-    ctx.set(formula::Var::Length, 1.0);
-
-    // Length first so the other formulas can refer to LENGTH.
-    double length = step.length.empty() ? 1.0 : std::clamp(step.length.eval(ctx), 0.1, 16.0);
-    ctx.set(formula::Var::Length, length);
-
-    int pitch = step.note.empty() ? src.pitch : static_cast<int>(std::lround(step.note.eval(ctx)));
-    if (pitch < 0 || pitch > 127)
+    const StepResult r = evaluateStep(pattern, patternStep, {src.channel, src.pitch, src.velocity}, prevNote,
+                                      settings.gate, &rngState);
+    if (!r.playable)
         return;
-    int velocity = step.velocity.empty() ? src.velocity
-                                         : static_cast<int>(std::lround(step.velocity.eval(ctx)));
-    velocity = std::clamp(velocity, 1, 127);
-    double gate = step.gate.empty() ? settings.gate : step.gate.eval(ctx) / 100.0; // formula is in %
-    gate = std::clamp(gate, 0.01, 1.0);
+    const int pitch = r.pitch, velocity = r.velocity;
+    const double gate = r.gate, length = r.length;
 
     // Retrigger: close a still-sounding copy of this pitch first.
     for (int i = 0; i < numPending;) {
@@ -139,6 +150,8 @@ void ArpEngine::playNote(const SeqNote& src, int patternStep, double stepPpq, in
 void ArpEngine::fireStep(long stepIndex, double stepPpq, int sampleOffset, const Pattern& pattern,
                          std::vector<MidiOut>& out)
 {
+    const int numSteps = std::clamp(settings.numSteps, 1, kMaxSteps);
+    lastStep = static_cast<int>(stepIndex % numSteps); // playhead moves even with no notes held
     if (numHeld == 0)
         return;
     if (seqDirty || builtMode != settings.mode || builtOctaves != settings.octaves)
@@ -146,8 +159,7 @@ void ArpEngine::fireStep(long stepIndex, double stepPpq, int sampleOffset, const
     if (seqLen == 0)
         return;
 
-    const int numSteps = std::clamp(settings.numSteps, 1, kMaxSteps);
-    const int patternStep = static_cast<int>(stepIndex % numSteps);
+    const int patternStep = lastStep;
     if (!pattern.steps[static_cast<size_t>(patternStep)].active) {
         ++sequencePos; // rests still advance the order, like a tracker row
         return;

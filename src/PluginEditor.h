@@ -2,6 +2,7 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "PluginProcessor.h"
+#include "TrackerGrid.h"
 
 class ArpExcelAudioProcessorEditor : public juce::AudioProcessorEditor {
 public:
@@ -10,8 +11,13 @@ public:
 
     void paint(juce::Graphics&) override;
     void resized() override;
+    void visibilityChanged() override;
+    void parentHierarchyChanged() override;
 
 private:
+    void showSelectedCell();
+    void commitFormula();
+
     ArpExcelAudioProcessor& processorRef;
 
     juce::ToggleButton enabledButton;
@@ -21,7 +27,12 @@ private:
     juce::Slider gateSlider;
     juce::Slider octaveRangeSlider;
     juce::Slider swingSlider;
-    juce::Label errorLabel;
+    juce::Label numStepsLabel, gateLabel, octaveRangeLabel, swingLabel;
+
+    juce::Label cellLabel;       // e.g. "5 vel"
+    juce::TextEditor formulaBar; // formula of the selected cell
+    juce::Label statusLabel;     // compile error or key hints
+    TrackerGrid grid;
 
     // Created after the combo boxes are populated so the initial selection shows.
     using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;

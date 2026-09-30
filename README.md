@@ -40,6 +40,28 @@ REM Build
 build.bat
 ```
 
+## Editing the Pattern
+
+The plugin window is a tracker-style grid: one row per step, one column per lane
+(`on`, `note`, `vel`, `gate`, `len`). Each cell shows the value its step produces
+for a preview chord (C E G held at velocity 100, played Up). The formula behind
+the selected cell is shown in the formula bar above the grid. Dim cells use the
+default, `ERR` marks a formula that doesn't compile (the error is shown below the
+grid), `~` marks a random value, and the playing step is highlighted.
+
+| Keys | Action |
+|---|---|
+| `h` `j` `k` `l` / arrows | move |
+| `gg` / `G`, Home / End | first / last step |
+| `Ctrl-d` / `Ctrl-u`, PgUp / PgDn | half page / page |
+| Tab / Shift-Tab | next / previous lane |
+| `i` `a` Enter F2, double-click | edit the formula (Enter commits, Esc cancels) |
+| `=` digit `-` `.` | start typing a new formula (spreadsheet style) |
+| `x` Delete Backspace | clear the cell |
+| Space, click in `on` | toggle the step on/off |
+| `y` / `p` | copy / paste a cell |
+| `u` / `Ctrl-r`, Cmd-Z / Cmd-Shift-Z | undo / redo |
+
 ## Formula Syntax
 
 Each step has four optional formulas. An empty formula uses the default in brackets.
@@ -113,7 +135,8 @@ ArpExcel/
 ├── init.sh                 # Project initializer (clones JUCE)
 ├── src/
 │   ├── PluginProcessor.h/cpp   # JUCE processor: params, MIDI I/O, state
-│   ├── PluginEditor.h/cpp      # Plugin UI
+│   ├── PluginEditor.h/cpp      # Plugin UI: controls, formula bar, grid
+│   ├── TrackerGrid.h/cpp       # Step grid with vim/spreadsheet editing
 │   ├── ArpPattern.h/cpp        # Editable pattern (formula text + cells), save/load
 │   └── engine/                 # Plain C++, no JUCE, unit-tested
 │       ├── ArpEngine.h/cpp     # Host-synced, real-time-safe arpeggiator

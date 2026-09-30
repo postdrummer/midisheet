@@ -39,6 +39,8 @@ public:
     arp::ArpPattern& getPattern() { return pattern_; }
     juce::StringArray patternChanged();
     const juce::StringArray& getPatternErrors() const { return patternErrors_; }
+    int getPatternVersion() const { return patternVersion_.load(); } // bumps on every patternChanged()
+    int getPlayingStep() const { return playingStep_.load(); }       // -1 until the first step
 
     // Parameters
     juce::AudioProcessorValueTreeState& getAPVTS() { return apvts_; }
@@ -54,6 +56,8 @@ private:
     arp::PatternExchange exchange_;    // message -> audio thread
     std::vector<arp::MidiOut> events_; // audio thread scratch
     juce::MidiBuffer outBuffer_;       // audio thread scratch
+    std::atomic<int> patternVersion_{0};
+    std::atomic<int> playingStep_{-1};
     juce::AudioProcessorValueTreeState apvts_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ArpExcelAudioProcessor)
