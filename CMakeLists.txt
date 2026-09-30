@@ -2,6 +2,19 @@ cmake_minimum_required(VERSION 3.22)
 
 project(ArpExcel VERSION 1.0.0)
 
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+option(ARPEXCEL_BUILD_TESTS "Build engine unit tests" ON)
+
+# Engine: plain C++ (no JUCE) so it can be unit-tested
+add_library(arp_engine STATIC
+    src/engine/ArpEngine.cpp
+    src/engine/Formula.cpp
+)
+target_include_directories(arp_engine PUBLIC src)
+
 # Fetch JUCE automatically
 include(FetchContent)
 FetchContent_Declare(JUCE
@@ -23,6 +36,8 @@ juce_add_plugin(ArpExcel
     PLUGIN_MANUFACTURER_CODE ArpE
     PLUGIN_CODE ArpX
     FORMATS VST3 AU Standalone
+    AU_MAIN_TYPE kAudioUnitType_MIDIProcessor
+    VST3_CATEGORIES Fx Instrument
     PRODUCT_NAME "ArpExcel"
 )
 
@@ -30,8 +45,6 @@ target_sources(ArpExcel
     PRIVATE
         src/PluginProcessor.cpp
         src/PluginEditor.cpp
-        src/Arpeggiator.cpp
-        src/FormulaEngine.cpp
         src/ArpPattern.cpp
 )
 
@@ -45,6 +58,7 @@ target_compile_definitions(ArpExcel
 
 target_link_libraries(ArpExcel
     PRIVATE
+        arp_engine
         juce::juce_audio_utils
         juce::juce_dsp
     PUBLIC
@@ -52,3 +66,10 @@ target_link_libraries(ArpExcel
         juce::juce_recommended_lto_flags
         juce::juce_recommended_warning_flags
 )
+
+if(ARPEXCEL_BUILD_TESTS)
+    enable_testing()
+    add_executable(engine_tests tests/EngineTests.cpp tests/FormulaTests.cpp tests/main.cpp)
+    target_link_libraries(engine_tests PRIVATE arp_engine)
+    add_test(NAME engine_tests COMMAND engine_tests)
+endif()

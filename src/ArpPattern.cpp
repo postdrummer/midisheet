@@ -2,159 +2,132 @@
 
 namespace arp {
 
-ArpPattern::ArpPattern() {
-    steps_.resize(MAX_STEPS);
+ArpPattern::ArpPattern()
+{
+    clear();
 }
 
-ArpStep& ArpPattern::getStep(int index) {
-    return steps_[juce::jlimit(0, MAX_STEPS - 1, index)];
+ArpStep& ArpPattern::getStep(int index)
+{
+    return steps_[static_cast<size_t>(juce::jlimit(0, MAX_STEPS - 1, index))];
 }
 
-const ArpStep& ArpPattern::getStep(int index) const {
-    return steps_[juce::jlimit(0, MAX_STEPS - 1, index)];
+const ArpStep& ArpPattern::getStep(int index) const
+{
+    return steps_[static_cast<size_t>(juce::jlimit(0, MAX_STEPS - 1, index))];
 }
 
-void ArpPattern::setStep(int index, const ArpStep& step) {
-    if (index >= 0 && index < MAX_STEPS) {
-        steps_[index] = step;
+bool ArpPattern::cellIndex(const juce::String& ref, int& index)
+{
+    auto r = ref.trim().toUpperCase();
+    if (r.length() < 2 || r[0] < 'A' || r[0] >= 'A' + formula::kCellCols
+        || !r.substring(1).containsOnly("0123456789"))
+        return false;
+    int row = r.substring(1).getIntValue();
+    if (row < 1 || row > formula::kCellRows)
+        return false;
+    index = (r[0] - 'A') * formula::kCellRows + (row - 1);
+    return true;
+}
+
+void ArpPattern::setCell(const juce::String& ref, double value)
+{
+    int i;
+    if (cellIndex(ref, i))
+        cells_[static_cast<size_t>(i)] = value;
+}
+
+double ArpPattern::getCell(const juce::String& ref) const
+{
+    int i;
+    return cellIndex(ref, i) ? cells_[static_cast<size_t>(i)] : 0.0;
+}
+
+std::unique_ptr<Pattern> ArpPattern::compile(juce::StringArray& errors) const
+{
+    auto out = std::make_unique<Pattern>();
+    out->cells = cells_;
+
+    auto compileOne = [&](const juce::String& text, formula::Program& prog, int step, const char* lane) {
+        if (text.trim().isEmpty())
+            return;
+        std::string err;
+        prog = formula::Program::compile(text.toStdString(), err);
+        if (!err.empty())
+            errors.add(juce::String(step + 1) + " " + lane + ": " + juce::String(err));
+    };
+
+    for (int i = 0; i < MAX_STEPS; ++i) {
+        const auto& src = steps_[static_cast<size_t>(i)];
+        auto& dst = out->steps[static_cast<size_t>(i)];
+        dst.active = src.active;
+        compileOne(src.noteFormula, dst.note, i, "note");
+        compileOne(src.velocityFormula, dst.velocity, i, "velocity");
+        compileOne(src.gateFormula, dst.gate, i, "gate");
+        compileOne(src.lengthFormula, dst.length, i, "length");
     }
+    return out;
 }
 
-void ArpPattern::setNoteFormula(int step, const juce::String& formula) {
-    if (step >= 0 && step < MAX_STEPS) steps_[step].noteFormula = formula;
-}
-
-void ArpPattern::setVelocityFormula(int step, const juce::String& formula) {
-    if (step >= 0 && step < MAX_STEPS) steps_[step].velocityFormula = formula;
-}
-
-void ArpPattern::setGateFormula(int step, const juce::String& formula) {
-    if (step >= 0 && step < MAX_STEPS) steps_[step].gateFormula = formula;
-}
-
-void ArpPattern::setLengthFormula(int step, const juce::String& formula) {
-    if (step >= 0 && step < MAX_STEPS) steps_[step].lengthFormula = formula;
-}
-
-juce::String ArpPattern::getNoteFormula(int step) const {
-    if (step >= 0 && step < MAX_STEPS) return steps_[step].noteFormula;
-    return {};
-}
-
-juce::String ArpPattern::getVelocityFormula(int step) const {
-    if (step >= 0 && step < MAX_STEPS) return steps_[step].velocityFormula;
-    return {};
-}
-
-juce::String ArpPattern::getGateFormula(int step) const {
-    if (step >= 0 && step < MAX_STEPS) return steps_[step].gateFormula;
-    return {};
-}
-
-juce::String ArpPattern::getLengthFormula(int step) const {
-    if (step >= 0 && step < MAX_STEPS) return steps_[step].lengthFormula;
-    return {};
-}
-
-void ArpPattern::evaluate(FormulaEngine& engine, int currentStep, int inputNote, int inputVelocity) {
-    engine.setVariable("STEP", currentStep);
-    engine.setVariable("NOTE", inputNote);
-    engine.setVariable("VELOCITY", inputVelocity);
-
-    for (int i = 0; i < numSteps; i++) {
-        ArpStep& step = steps_[i];
-
-        // Evaluate note formula
-        if (step.noteFormula.isNotEmpty()) {
-            double val = engine.evaluate(step.noteFormula);
-            step.note = juce::jlimit(0, 127, static_cast<int>(val));
-        }
-
-        // Evaluate velocity formula
-        if (step.velocityFormula.isNotEmpty()) {
-            double val = engine.evaluate(step.velocityFormula);
-            step.velocity = juce::jlimit(1, 127, static_cast<int>(val));
-        }
-
-        // Evaluate gate formula
-        if (step.gateFormula.isNotEmpty()) {
-            double val = engine.evaluate(step.gateFormula);
-            step.gate = juce::jlimit(0.0, 1.0, val / 100.0);
-        }
-
-        // Evaluate length formula
-        if (step.lengthFormula.isNotEmpty()) {
-            double val = engine.evaluate(step.lengthFormula);
-            step.length = juce::jlimit(0.1, 16.0, val);
-        }
-    }
-}
-
-void ArpPattern::clear() {
-    for (auto& step : steps_) {
+void ArpPattern::clear()
+{
+    for (auto& step : steps_)
         step = ArpStep();
+    cells_.fill(0.0);
+
+    // Demo pattern: accent every beat, tie the last step of each half-bar.
+    // Note formulas are left empty so the pattern follows the held notes.
+    for (auto& step : steps_) {
+        step.velocityFormula = "=IF(MOD(STEP,4)=0,127,80)";
+        step.lengthFormula = "=IF(MOD(STEP,8)=7,2,1)";
     }
-    numSteps = 16;
 }
 
-juce::var ArpPattern::toVar() const {
-    juce::Array<juce::var> arr;
-    for (int i = 0; i < numSteps; i++) {
-        juce::DynamicObject::Ptr obj = new juce::DynamicObject();
-        obj->setProperty("noteFormula", steps_[i].noteFormula);
-        obj->setProperty("velocityFormula", steps_[i].velocityFormula);
-        obj->setProperty("gateFormula", steps_[i].gateFormula);
-        obj->setProperty("lengthFormula", steps_[i].lengthFormula);
-        obj->setProperty("active", steps_[i].active);
-        arr.add(obj.get());
+juce::var ArpPattern::toVar() const
+{
+    auto* root = new juce::DynamicObject();
+    juce::Array<juce::var> steps;
+    for (const auto& s : steps_) {
+        auto* obj = new juce::DynamicObject();
+        obj->setProperty("noteFormula", s.noteFormula);
+        obj->setProperty("velocityFormula", s.velocityFormula);
+        obj->setProperty("gateFormula", s.gateFormula);
+        obj->setProperty("lengthFormula", s.lengthFormula);
+        obj->setProperty("active", s.active);
+        steps.add(juce::var(obj));
     }
-    return arr;
+    root->setProperty("steps", steps);
+
+    auto* cells = new juce::DynamicObject();
+    for (int i = 0; i < static_cast<int>(cells_.size()); ++i)
+        if (cells_[static_cast<size_t>(i)] != 0.0)
+            cells->setProperty(juce::String::charToString(static_cast<juce::juce_wchar>('A' + i / formula::kCellRows))
+                                   + juce::String(i % formula::kCellRows + 1),
+                               cells_[static_cast<size_t>(i)]);
+    root->setProperty("cells", juce::var(cells));
+    return juce::var(root);
 }
 
-void ArpPattern::fromVar(const juce::var& v) {
-    if (v.isArray()) {
-        auto* arr = v.getArray();
-        numSteps = juce::jlimit(1, MAX_STEPS, static_cast<int>(arr->size()));
-        for (int i = 0; i < numSteps && i < arr->size(); i++) {
-            auto* obj = arr->getReference(i).getDynamicObject();
-            if (obj) {
-                steps_[i].noteFormula = obj->getProperty("noteFormula");
-                steps_[i].velocityFormula = obj->getProperty("velocityFormula");
-                steps_[i].gateFormula = obj->getProperty("gateFormula");
-                steps_[i].lengthFormula = obj->getProperty("lengthFormula");
-                steps_[i].active = obj->getProperty("active");
-            }
+void ArpPattern::fromVar(const juce::var& v)
+{
+    if (auto* steps = v["steps"].getArray()) {
+        for (int i = 0; i < MAX_STEPS; ++i) {
+            auto& s = steps_[static_cast<size_t>(i)];
+            s = ArpStep();
+            if (i >= steps->size())
+                continue;
+            const auto& obj = steps->getReference(i);
+            s.noteFormula = obj["noteFormula"].toString();
+            s.velocityFormula = obj["velocityFormula"].toString();
+            s.gateFormula = obj["gateFormula"].toString();
+            s.lengthFormula = obj["lengthFormula"].toString();
+            s.active = obj.hasProperty("active") ? static_cast<bool>(obj["active"]) : true;
         }
     }
-}
-
-int ArpPattern::getNote(int step) const {
-    if (step >= 0 && step < MAX_STEPS) return steps_[step].note;
-    return 60;
-}
-
-int ArpPattern::getVelocity(int step) const {
-    if (step >= 0 && step < MAX_STEPS) return steps_[step].velocity;
-    return 100;
-}
-
-double ArpPattern::getGate(int step) const {
-    if (step >= 0 && step < MAX_STEPS) return steps_[step].gate;
-    return 0.5;
-}
-
-double ArpPattern::getLength(int step) const {
-    if (step >= 0 && step < MAX_STEPS) return steps_[step].length;
-    return 1.0;
-}
-
-bool ArpPattern::isStepActive(int step) const {
-    if (step >= 0 && step < MAX_STEPS) return steps_[step].active;
-    return false;
-}
-
-void ArpPattern::setStepActive(int step, bool active) {
-    if (step >= 0 && step < MAX_STEPS) steps_[step].active = active;
+    cells_.fill(0.0);
+    if (auto* cells = v["cells"].getDynamicObject())
+        for (const auto& prop : cells->getProperties())
+            setCell(prop.name.toString(), static_cast<double>(prop.value));
 }
 
 } // namespace arp
