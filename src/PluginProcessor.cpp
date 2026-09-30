@@ -60,6 +60,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout ArpExcelAudioProcessor::crea
 juce::StringArray ArpExcelAudioProcessor::patternChanged() {
     patternErrors_.clear();
     exchange_.publish(pattern_.compile(patternErrors_));
+    ++patternVersion_;
     return patternErrors_;
 }
 
@@ -118,6 +119,7 @@ void ArpExcelAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
 
     events_.clear();
     engine_.process(transport, exchange_.acquire(), buffer.getNumSamples(), events_);
+    playingStep_.store(engine_.lastPatternStep(), std::memory_order_relaxed);
     for (const auto& e : events_) {
         out.addEvent(e.noteOn ? juce::MidiMessage::noteOn(e.channel, e.pitch, static_cast<juce::uint8>(e.velocity))
                               : juce::MidiMessage::noteOff(e.channel, e.pitch),
