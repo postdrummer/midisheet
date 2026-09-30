@@ -21,14 +21,15 @@ private:
     juce::Slider gateSlider;
     juce::Slider octaveRangeSlider;
     juce::Slider swingSlider;
+    juce::Label errorLabel;
 
-    juce::AudioProcessorValueTreeState::ButtonAttachment enabledAttachment;
-    juce::AudioProcessorValueTreeState::ComboBoxAttachment modeAttachment;
-    juce::AudioProcessorValueTreeState::ComboBoxAttachment rateAttachment;
-    juce::AudioProcessorValueTreeState::SliderAttachment numStepsAttachment;
-    juce::AudioProcessorValueTreeState::SliderAttachment gateAttachment;
-    juce::AudioProcessorValueTreeState::SliderAttachment octaveRangeAttachment;
-    juce::AudioProcessorValueTreeState::SliderAttachment swingAttachment;
+    // Created after the combo boxes are populated so the initial selection shows.
+    using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;
+    using ComboBoxAttachment = juce::AudioProcessorValueTreeState::ComboBoxAttachment;
+    using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
+    std::unique_ptr<ButtonAttachment> enabledAttachment;
+    std::unique_ptr<ComboBoxAttachment> modeAttachment, rateAttachment;
+    std::unique_ptr<SliderAttachment> numStepsAttachment, gateAttachment, octaveRangeAttachment, swingAttachment;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ArpExcelAudioProcessorEditor)
 };

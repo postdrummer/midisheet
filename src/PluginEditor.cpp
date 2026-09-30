@@ -1,37 +1,36 @@
 #include "PluginEditor.h"
 
 ArpExcelAudioProcessorEditor::ArpExcelAudioProcessorEditor(ArpExcelAudioProcessor& p)
-    : AudioProcessorEditor(&p), processorRef(p),
-      enabledAttachment(p.getAPVTS(), "enabled", enabledButton),
-      modeAttachment(p.getAPVTS(), "mode", modeCombo),
-      rateAttachment(p.getAPVTS(), "rate", rateCombo),
-      numStepsAttachment(p.getAPVTS(), "numSteps", numStepsSlider),
-      gateAttachment(p.getAPVTS(), "gate", gateSlider),
-      octaveRangeAttachment(p.getAPVTS(), "octaveRange", octaveRangeSlider),
-      swingAttachment(p.getAPVTS(), "swing", swingSlider)
+    : AudioProcessorEditor(&p), processorRef(p)
 {
+    auto& apvts = p.getAPVTS();
+
     enabledButton.setButtonText("Enabled");
     addAndMakeVisible(enabledButton);
 
-    modeCombo.addItemList({"Up", "Down", "Up-Down", "Down-Up", "Random", "Order", "Chord"}, 1);
+    modeCombo.addItemList(apvts.getParameter("mode")->getAllValueStrings(), 1);
     addAndMakeVisible(modeCombo);
 
-    rateCombo.addItemList({"1/1", "1/2", "1/4", "1/8", "1/16", "1/32", "1/64"}, 1);
+    rateCombo.addItemList(apvts.getParameter("rate")->getAllValueStrings(), 1);
     addAndMakeVisible(rateCombo);
 
-    numStepsSlider.setRange(1, 64, 1);
-    numStepsSlider.setNumDecimalPlacesToDisplay(0);
-    addAndMakeVisible(numStepsSlider);
+    for (auto* s : {&numStepsSlider, &gateSlider, &octaveRangeSlider, &swingSlider})
+        addAndMakeVisible(*s);
 
-    gateSlider.setRange(0.0, 1.0, 0.01);
-    addAndMakeVisible(gateSlider);
+    enabledAttachment = std::make_unique<ButtonAttachment>(apvts, "enabled", enabledButton);
+    modeAttachment = std::make_unique<ComboBoxAttachment>(apvts, "mode", modeCombo);
+    rateAttachment = std::make_unique<ComboBoxAttachment>(apvts, "rate", rateCombo);
+    numStepsAttachment = std::make_unique<SliderAttachment>(apvts, "numSteps", numStepsSlider);
+    gateAttachment = std::make_unique<SliderAttachment>(apvts, "gate", gateSlider);
+    octaveRangeAttachment = std::make_unique<SliderAttachment>(apvts, "octaveRange", octaveRangeSlider);
+    swingAttachment = std::make_unique<SliderAttachment>(apvts, "swing", swingSlider);
 
-    octaveRangeSlider.setRange(1, 8, 1);
-    octaveRangeSlider.setNumDecimalPlacesToDisplay(0);
-    addAndMakeVisible(octaveRangeSlider);
-
-    swingSlider.setRange(0.0, 1.0, 0.01);
-    addAndMakeVisible(swingSlider);
+    // Surface formula compile errors (unknown names, bad syntax) instead of silently playing 0.
+    const auto& errors = p.getPatternErrors();
+    errorLabel.setText(errors.isEmpty() ? juce::String() : "Formula errors: " + errors.joinIntoString("; "),
+                       juce::dontSendNotification);
+    errorLabel.setColour(juce::Label::textColourId, juce::Colours::orange);
+    addAndMakeVisible(errorLabel);
 
     setSize(600, 400);
 }
@@ -47,6 +46,7 @@ void ArpExcelAudioProcessorEditor::paint(juce::Graphics& g) {
 
 void ArpExcelAudioProcessorEditor::resized() {
     auto area = getLocalBounds().reduced(20);
+    area.removeFromTop(40); // title
     enabledButton.setBounds(area.removeFromTop(30));
     area.removeFromTop(10);
     modeCombo.setBounds(area.removeFromTop(30));
@@ -60,4 +60,5 @@ void ArpExcelAudioProcessorEditor::resized() {
     octaveRangeSlider.setBounds(area.removeFromTop(30));
     area.removeFromTop(10);
     swingSlider.setBounds(area.removeFromTop(30));
+    errorLabel.setBounds(area);
 }

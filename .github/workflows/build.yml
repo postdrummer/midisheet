@@ -24,6 +24,16 @@ jobs:
       - name: Build
         run: cmake --build build --config Release
 
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Validate AU
+        run: |
+          mkdir -p ~/Library/Audio/Plug-Ins/Components
+          cp -R build/ArpExcel_artefacts/Release/AU/ArpExcel.component ~/Library/Audio/Plug-Ins/Components/
+          killall -9 AudioComponentRegistrar || true
+          auval -v aumi ArpX ArpE
+
       - name: Upload VST3
         uses: actions/upload-artifact@v4
         with:
