@@ -2,7 +2,7 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
-#include "ArpPattern.h"
+#include "sheet/Sheet.h"
 #include "engine/ArpEngine.h"
 #include "engine/PatternExchange.h"
 
@@ -34,13 +34,13 @@ public:
     void getStateInformation(juce::MemoryBlock& destData) override;
     void setStateInformation(const void* data, int sizeInBytes) override;
 
-    // Pattern editing (message thread only). Call patternChanged() after
-    // editing to recompile and hand the new pattern to the audio thread.
-    arp::ArpPattern& getPattern() { return pattern_; }
-    juce::StringArray patternChanged();
-    const juce::StringArray& getPatternErrors() const { return patternErrors_; }
-    int getPatternVersion() const { return patternVersion_.load(); } // bumps on every patternChanged()
-    int getPlayingStep() const { return playingStep_.load(); }       // -1 until the first step
+    // Sheet editing (message thread only). Call sheetChanged() after editing
+    // to recompile and hand the new sheet to the audio thread.
+    arp::Sheet& getSheet() { return sheet_; }
+    juce::StringArray sheetChanged();
+    const juce::StringArray& getSheetErrors() const { return sheetErrors_; }
+    int getSheetVersion() const { return sheetVersion_.load(); } // bumps on every sheetChanged()
+    int getPlayingStep() const { return playingStep_.load(); }   // -1 until the first step
 
     // Parameters
     juce::AudioProcessorValueTreeState& getAPVTS() { return apvts_; }
@@ -51,12 +51,12 @@ private:
     void syncSettings();
 
     arp::ArpEngine engine_;
-    arp::ArpPattern pattern_;          // message thread
-    juce::StringArray patternErrors_;  // message thread
-    arp::PatternExchange exchange_;    // message -> audio thread
-    std::vector<arp::MidiOut> events_; // audio thread scratch
-    juce::MidiBuffer outBuffer_;       // audio thread scratch
-    std::atomic<int> patternVersion_{0};
+    arp::Sheet sheet_;                    // message thread
+    juce::StringArray sheetErrors_;       // message thread
+    arp::Exchange<arp::CompiledSheet> exchange_; // message -> audio thread
+    std::vector<arp::MidiOut> events_;    // audio thread scratch
+    juce::MidiBuffer outBuffer_;          // audio thread scratch
+    std::atomic<int> sheetVersion_{0};
     std::atomic<int> playingStep_{-1};
     juce::AudioProcessorValueTreeState apvts_;
 

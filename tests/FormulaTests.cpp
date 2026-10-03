@@ -1,17 +1,19 @@
 #include "Check.h"
 #include "engine/Formula.h"
+#include "sheet/Column.h"
 
 #include <cmath>
 #include <string>
 
 using namespace arp::formula;
+using arp::kMaxColumns;
 
 namespace {
 
 double eval(const char* src, Context ctx = {})
 {
     std::string err;
-    auto prog = Program::compile(src, err);
+    auto prog = Program::compile(src, err, kMaxColumns);
     CHECK(err.empty());
     if (!err.empty())
         std::fprintf(stderr, "  compile error for '%s': %s\n", src, err.c_str());
@@ -21,7 +23,7 @@ double eval(const char* src, Context ctx = {})
 bool fails(const char* src)
 {
     std::string err;
-    auto prog = Program::compile(src, err);
+    auto prog = Program::compile(src, err, kMaxColumns);
     return !err.empty() && prog.empty();
 }
 
@@ -57,7 +59,7 @@ void testComparisonsAndFunctions()
 
 void testVariablesAndCells()
 {
-    double cells[kCellCols * kCellRows] = {};
+    double cells[kMaxColumns * kCellRows] = {};
     cells[0] = 60;             // A1
     cells[kCellRows + 1] = 7;  // B2
     Context ctx;
@@ -70,13 +72,25 @@ void testVariablesAndCells()
     CHECK(eval("=IF(MOD(STEP,4)=1,VELOCITY-10,VELOCITY)", ctx) == 80);
 }
 
+void testMultiLetterCellRefs()
+{
+    double cells[kMaxColumns * kCellRows] = {};
+    cells[26 * kCellRows + 0] = 42; // AA1 (column 26)
+    cells[27 * kCellRows + 1] = 8;  // AB2 (column 27)
+    Context ctx;
+    ctx.cells = cells;
+    CHECK(eval("=AA1", ctx) == 42);
+    CHECK(eval("=AB2", ctx) == 8);
+    CHECK(eval("=AA1+AB2", ctx) == 50);
+}
+
 void testRandom()
 {
     uint32_t rng = 12345;
     Context ctx;
     ctx.rng = &rng;
     std::string err;
-    auto prog = Program::compile("=RANDOM(60,72)", err);
+    auto prog = Program::compile("=RANDOM(60,72)", err, kMaxColumns);
     bool varied = false;
     double first = prog.eval(ctx);
     for (int i = 0; i < 100; ++i) {
@@ -96,7 +110,6 @@ void testErrors()
     CHECK(fails("=(1+2"));
     CHECK(fails("=1+"));
     CHECK(fails("=1 2"));
-    CHECK(fails("=Z1"));
     CHECK(fails("=A65"));
     CHECK(fails(""));
     CHECK(fails(std::string(200, '(').c_str()));
@@ -109,6 +122,7 @@ void runFormulaTests()
     testArithmetic();
     testComparisonsAndFunctions();
     testVariablesAndCells();
+    testMultiLetterCellRefs();
     testRandom();
     testErrors();
 }

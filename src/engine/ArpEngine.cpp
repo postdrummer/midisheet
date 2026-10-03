@@ -5,13 +5,11 @@
 
 namespace arp {
 
-StepResult evaluateStep(const Pattern& pattern, int patternStep, const StepInput& in, int prevNote,
+StepResult evaluateStep(const CompiledSheet& sheet, int patternStep, const StepInput& in, int prevNote,
                         double defaultGate, uint32_t* rng)
 {
-    const Step& step = pattern.steps[static_cast<size_t>(patternStep)];
-
     formula::Context ctx;
-    ctx.cells = pattern.cells.data();
+    ctx.cells = sheet.cells.data();
     ctx.rng = rng;
     ctx.set(formula::Var::Step, patternStep);
     ctx.set(formula::Var::Note, in.pitch);
@@ -21,16 +19,52 @@ StepResult evaluateStep(const Pattern& pattern, int patternStep, const StepInput
     ctx.set(formula::Var::Length, 1.0);
 
     StepResult r;
-    // Length first so the other formulas can refer to LENGTH.
-    r.length = step.length.empty() ? 1.0 : std::clamp(step.length.eval(ctx), 0.1, 16.0);
-    ctx.set(formula::Var::Length, r.length);
+    r.pitch = in.pitch;
+    r.velocity = in.velocity;
+    r.gate = defaultGate;
+    r.length = 1.0;
+    r.playable = true;
 
-    r.pitch = step.note.empty() ? in.pitch : static_cast<int>(std::lround(step.note.eval(ctx)));
-    r.playable = r.pitch >= 0 && r.pitch <= 127;
-    r.velocity = step.velocity.empty() ? in.velocity : static_cast<int>(std::lround(step.velocity.eval(ctx)));
+    // Evaluate visible columns left-to-right; each column transforms the signal.
+    for (int col = 0; col < sheet.numCols; ++col) {
+        const auto& meta = sheet.cols[static_cast<size_t>(col)];
+        if (!meta.visible)
+            continue;
+
+        const double value = sheet.evaluateCell(col, patternStep, ctx);
+
+        switch (meta.type) {
+            case ColumnType::Note:
+                // Negative = pass through the incoming note.
+                if (value >= 0.0)
+                    r.pitch = static_cast<int>(std::lround(value));
+                break;
+            case ColumnType::Shift:
+                r.pitch += static_cast<int>(std::lround(value));
+                break;
+            case ColumnType::Octave:
+                r.pitch += static_cast<int>(std::lround(value)) * 12;
+                break;
+            case ColumnType::Velocity:
+                r.velocity = static_cast<int>(std::lround(value));
+                break;
+            case ColumnType::Gate:
+                r.gate = value / 100.0; // gate columns are in percent
+                break;
+            case ColumnType::Length:
+                r.length = value;
+                ctx.set(formula::Var::Length, r.length);
+                break;
+            default:
+                break; // Time, Chance, CC, Text, Formula: no direct effect yet
+        }
+    }
+
+    r.pitch = std::clamp(r.pitch, 0, 127);
     r.velocity = std::clamp(r.velocity, 1, 127);
-    r.gate = step.gate.empty() ? defaultGate : step.gate.eval(ctx) / 100.0; // formula is in %
     r.gate = std::clamp(r.gate, 0.01, 1.0);
+    r.length = std::clamp(r.length, 0.1, 16.0);
+    r.playable = r.pitch >= 0 && r.pitch <= 127;
     return r;
 }
 
@@ -119,9 +153,9 @@ void ArpEngine::buildSequence()
 }
 
 void ArpEngine::playNote(const SeqNote& src, int patternStep, double stepPpq, int sampleOffset,
-                         const Pattern& pattern, std::vector<MidiOut>& out)
+                          const CompiledSheet& sheet, std::vector<MidiOut>& out)
 {
-    const StepResult r = evaluateStep(pattern, patternStep, {src.channel, src.pitch, src.velocity}, prevNote,
+    const StepResult r = evaluateStep(sheet, patternStep, {src.channel, src.pitch, src.velocity}, prevNote,
                                       settings.gate, &rngState);
     if (!r.playable)
         return;
@@ -143,12 +177,12 @@ void ArpEngine::playNote(const SeqNote& src, int patternStep, double stepPpq, in
 
     out.push_back({sampleOffset, true, src.channel, pitch, velocity});
     pending[static_cast<size_t>(numPending++)] = {stepPpq + length * gate * settings.rateBeats,
-                                                  src.channel, pitch};
+                                                   src.channel, pitch};
     prevNote = pitch;
 }
 
-void ArpEngine::fireStep(long stepIndex, double stepPpq, int sampleOffset, const Pattern& pattern,
-                         std::vector<MidiOut>& out)
+void ArpEngine::fireStep(long stepIndex, double stepPpq, int sampleOffset, const CompiledSheet& sheet,
+                          std::vector<MidiOut>& out)
 {
     const int numSteps = std::clamp(settings.numSteps, 1, kMaxSteps);
     lastStep = static_cast<int>(stepIndex % numSteps); // playhead moves even with no notes held
@@ -160,21 +194,21 @@ void ArpEngine::fireStep(long stepIndex, double stepPpq, int sampleOffset, const
         return;
 
     const int patternStep = lastStep;
-    if (!pattern.steps[static_cast<size_t>(patternStep)].active) {
+    if (!sheet.isStepActive(patternStep)) {
         ++sequencePos; // rests still advance the order, like a tracker row
         return;
     }
 
     if (settings.mode == Mode::Chord) {
         for (int i = 0; i < seqLen; ++i)
-            playNote(seq[static_cast<size_t>(i)], patternStep, stepPpq, sampleOffset, pattern, out);
+            playNote(seq[static_cast<size_t>(i)], patternStep, stepPpq, sampleOffset, sheet, out);
         return;
     }
 
     size_t idx = settings.mode == Mode::Random ? nextRandom() % static_cast<uint32_t>(seqLen)
                                                : static_cast<size_t>(sequencePos % static_cast<uint64_t>(seqLen));
     ++sequencePos;
-    playNote(seq[idx], patternStep, stepPpq, sampleOffset, pattern, out);
+    playNote(seq[idx], patternStep, stepPpq, sampleOffset, sheet, out);
 }
 
 void ArpEngine::flushAllOffs(int sampleOffset, std::vector<MidiOut>& out)
@@ -186,7 +220,7 @@ void ArpEngine::flushAllOffs(int sampleOffset, std::vector<MidiOut>& out)
 }
 
 void ArpEngine::emitDueOffs(double ppqStart, double beatsPerSample, int numSamples,
-                            std::vector<MidiOut>& out)
+                             std::vector<MidiOut>& out)
 {
     for (int i = 0; i < numPending;) {
         auto& p = pending[static_cast<size_t>(i)];
@@ -200,8 +234,8 @@ void ArpEngine::emitDueOffs(double ppqStart, double beatsPerSample, int numSampl
     }
 }
 
-void ArpEngine::process(const Transport& transport, const Pattern& pattern, int numSamples,
-                        std::vector<MidiOut>& out)
+void ArpEngine::process(const Transport& transport, const CompiledSheet& sheet, int numSamples,
+                         std::vector<MidiOut>& out)
 {
     if (numSamples <= 0)
         return;
@@ -247,7 +281,7 @@ void ArpEngine::process(const Transport& transport, const Pattern& pattern, int 
         const long offset = std::lround((stepPpq - ppqStart) / beatsPerSample);
         if (s < 0 || offset < 0 || offset >= numSamples)
             continue;
-        fireStep(s, stepPpq, static_cast<int>(offset), pattern, out);
+        fireStep(s, stepPpq, static_cast<int>(offset), sheet, out);
     }
 
     emitDueOffs(ppqStart, beatsPerSample, numSamples, out); // very short gates

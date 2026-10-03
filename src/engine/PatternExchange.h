@@ -1,7 +1,7 @@
 #pragma once
 
-// Lock-free handoff of compiled patterns from the message thread to the audio
-// thread. The audio thread never allocates or frees: replaced patterns are
+// Lock-free handoff of compiled sheets from the message thread to the audio
+// thread. The audio thread never allocates or frees: replaced sheets are
 // parked in `retired` and deleted by the message thread on its next publish().
 
 #include "ArpEngine.h"
@@ -11,31 +11,32 @@
 
 namespace arp {
 
-class PatternExchange {
+template <typename T>
+class Exchange {
 public:
-    PatternExchange() : live(new Pattern()) {}
-    ~PatternExchange()
+    Exchange() : live(new T()) {}
+    ~Exchange()
     {
         delete live;
         delete pending.load();
         delete retired.load();
     }
-    PatternExchange(const PatternExchange&) = delete;
-    PatternExchange& operator=(const PatternExchange&) = delete;
+    Exchange(const Exchange&) = delete;
+    Exchange& operator=(const Exchange&) = delete;
 
     // Message thread.
-    void publish(std::unique_ptr<Pattern> next)
+    void publish(std::unique_ptr<T> next)
     {
         delete retired.exchange(nullptr, std::memory_order_acq_rel);
         delete pending.exchange(next.release(), std::memory_order_acq_rel); // never seen by audio
     }
 
     // Audio thread. The reference stays valid until the next call.
-    const Pattern& acquire()
+    const T& acquire()
     {
         if (pending.load(std::memory_order_acquire) != nullptr
             && retired.load(std::memory_order_acquire) == nullptr) {
-            if (Pattern* next = pending.exchange(nullptr, std::memory_order_acq_rel)) {
+            if (T* next = pending.exchange(nullptr, std::memory_order_acq_rel)) {
                 retired.store(live, std::memory_order_release);
                 live = next;
             }
@@ -44,9 +45,9 @@ public:
     }
 
 private:
-    Pattern* live;                        // owned by the audio thread
-    std::atomic<Pattern*> pending{nullptr};
-    std::atomic<Pattern*> retired{nullptr};
+    T* live;                          // owned by the audio thread
+    std::atomic<T*> pending{nullptr};
+    std::atomic<T*> retired{nullptr};
 };
 
 } // namespace arp

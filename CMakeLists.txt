@@ -12,8 +12,10 @@ option(ARPEXCEL_BUILD_TESTS "Build engine unit tests" ON)
 add_library(arp_engine STATIC
     src/engine/ArpEngine.cpp
     src/engine/Formula.cpp
+    src/sheet/Sheet.cpp
 )
 target_include_directories(arp_engine PUBLIC src)
+target_link_libraries(arp_engine PUBLIC juce::juce_core)
 
 # Fetch JUCE automatically
 include(FetchContent)
@@ -45,7 +47,6 @@ target_sources(Midisheet
     PRIVATE
         src/PluginProcessor.cpp
         src/PluginEditor.cpp
-        src/ArpPattern.cpp
         src/TrackerGrid.cpp
 )
 
@@ -70,7 +71,7 @@ target_link_libraries(Midisheet
 
 if(ARPEXCEL_BUILD_TESTS)
     enable_testing()
-    add_executable(engine_tests tests/EngineTests.cpp tests/FormulaTests.cpp tests/main.cpp)
+    add_executable(engine_tests tests/EngineTests.cpp tests/FormulaTests.cpp tests/SheetTests.cpp tests/main.cpp)
     target_link_libraries(engine_tests PRIVATE arp_engine)
     add_test(NAME engine_tests COMMAND engine_tests)
 endif()

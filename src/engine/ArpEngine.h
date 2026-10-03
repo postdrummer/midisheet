@@ -6,8 +6,14 @@
 // clock when the transport is stopped), so steps stay locked to the grid
 // across block sizes, loops and locates. Every event carries a sample offset
 // inside the current block.
+//
+// The engine consumes a CompiledSheet: for each step it evaluates the visible
+// columns left-to-right, each column potentially transforming the MIDI signal
+// (Note, Shift, Octave, Velocity, Gate, Length, ...).
 
 #include "Formula.h"
+#include "../sheet/CompiledSheet.h"
+#include "../sheet/Column.h"
 
 #include <array>
 #include <cstdint>
@@ -15,19 +21,7 @@
 
 namespace arp {
 
-constexpr int kMaxSteps = 64;
-
-struct Step {
-    bool active = true;
-    // Empty programs fall back to the arp note / held velocity / global gate / 1 step.
-    formula::Program note, velocity, gate, length;
-};
-
-// Immutable once handed to the engine; see PatternExchange.
-struct Pattern {
-    std::array<Step, kMaxSteps> steps;
-    std::array<double, formula::kCellCols * formula::kCellRows> cells{};
-};
+constexpr int kMaxSteps = kMaxRows;
 
 struct StepInput {
     int channel = 1;
@@ -36,16 +30,16 @@ struct StepInput {
 };
 
 struct StepResult {
-    bool playable = true; // false when the note formula lands outside 0..127
+    bool playable = true; // false when the note lands outside 0..127
     int pitch = 60;
     int velocity = 100;
     double gate = 0.5;   // fraction of the note length
     double length = 1.0; // in steps
 };
 
-// Applies a step's formulas to the note the arp picked. Shared by the engine
+// Applies a step's columns to the note the arp picked. Shared by the engine
 // and the editor's preview so both always agree. Real-time safe.
-StepResult evaluateStep(const Pattern&, int patternStep, const StepInput&, int prevNote,
+StepResult evaluateStep(const CompiledSheet& sheet, int patternStep, const StepInput& in, int prevNote,
                         double defaultGate, uint32_t* rng);
 
 enum class Mode { Up, Down, UpDown, DownUp, Random, Order, Chord };
@@ -87,7 +81,7 @@ public:
 
     // Appends this block's events to `out`, sorted by sampleOffset.
     // Real-time safe provided `out` has spare capacity.
-    void process(const Transport&, const Pattern&, int numSamples, std::vector<MidiOut>& out);
+    void process(const Transport&, const CompiledSheet&, int numSamples, std::vector<MidiOut>& out);
 
     Settings settings;
 
@@ -104,8 +98,8 @@ private:
     static constexpr int kMaxPending = 256;
 
     void buildSequence();
-    void fireStep(long stepIndex, double stepPpq, int sampleOffset, const Pattern&, std::vector<MidiOut>&);
-    void playNote(const SeqNote&, int patternStep, double stepPpq, int sampleOffset, const Pattern&, std::vector<MidiOut>&);
+    void fireStep(long stepIndex, double stepPpq, int sampleOffset, const CompiledSheet&, std::vector<MidiOut>&);
+    void playNote(const SeqNote&, int patternStep, double stepPpq, int sampleOffset, const CompiledSheet&, std::vector<MidiOut>&);
     void emitDueOffs(double ppqStart, double beatsPerSample, int numSamples, std::vector<MidiOut>&);
     void flushAllOffs(int sampleOffset, std::vector<MidiOut>&);
     uint32_t nextRandom();

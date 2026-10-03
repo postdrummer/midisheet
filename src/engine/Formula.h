@@ -4,10 +4,13 @@
 // times (audio thread) without allocating. No JUCE dependency.
 //
 // Syntax (leading '=' optional):
-//   numbers, TRUE/FALSE, cell refs A1..H64
+//   numbers, TRUE/FALSE, cell refs A1..Z1, AA1..BL64 (column letters + row)
 //   variables  STEP NOTE VELOCITY LENGTH CHANNEL PREV RANDOM
 //   operators  + - * / % ^   comparisons = <> < > <= >=
 //   functions  MOD IF SUM AVG/AVERAGE MIN MAX ABS ROUND FLOOR CEIL RANDOM
+//
+// The column count is passed to compile() so cell references resolve against
+// the sheet's actual column count (not a fixed grid).
 
 #include <cstdint>
 #include <string>
@@ -18,7 +21,6 @@ namespace arp::formula {
 
 enum class Var : uint8_t { Step, Note, Velocity, Length, Channel, Prev, Count };
 
-constexpr int kCellCols = 8;  // A..H
 constexpr int kCellRows = 64; // 1..64
 
 struct Context {
@@ -26,16 +28,29 @@ struct Context {
     const double* cells = nullptr; // kCellCols * kCellRows, column-major (A1, A2, ...)
     uint32_t* rng = nullptr;       // xorshift state, advanced by RANDOM
 
+    // Optional cell-reference callback: `cellRef(sheet, index, ctx)` returns
+    // the *computed* value of cell `index` (formula > value > column default)
+    // instead of the raw literal in `cells`. CompiledSheet::evaluateCell
+    // installs it; when it is null (plain evaluation) Op::Cell falls back to
+    // `cells`.
+    const void* sheet = nullptr;
+    double (*cellRef)(const void* sheet, int index, const Context& ctx) = nullptr;
+
+    // Reference-chain depth, bumped by the callback so circular references
+    // (A1 = B1, B1 = A1) terminate instead of recursing forever.
+    int depth = 0;
+
     void set(Var v, double value) { vars[static_cast<int>(v)] = value; }
 };
 
 class Program {
 public:
-    // Returns an empty program and sets `error` on failure.
-    static Program compile(std::string_view source, std::string& error);
+    // Returns an empty program and sets `error` on failure. `numCols` is the
+    // sheet's column count, used to resolve cell references (A1, AA1, ...).
+    static Program compile(std::string_view source, std::string& error, int numCols);
 
     bool empty() const { return nodes.empty(); }
-    double eval(Context& ctx) const; // real-time safe
+    double eval(const Context& ctx) const; // real-time safe
 
 private:
     enum class Op : uint8_t {
@@ -53,7 +68,7 @@ private:
         int numArgs = 0;
     };
 
-    double evalNode(int node, Context& ctx) const;
+    double evalNode(int node, const Context& ctx) const;
 
     std::vector<Node> nodes; // root is the last node
     std::vector<int> args;   // child node indices

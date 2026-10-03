@@ -21,7 +21,7 @@ MidisheetAudioProcessor::MidisheetAudioProcessor()
     : AudioProcessor(makeBuses()),
       apvts_(*this, nullptr, "Parameters", createParameterLayout())
 {
-    patternChanged();
+    sheetChanged();
 }
 
 MidisheetAudioProcessor::~MidisheetAudioProcessor() {}
@@ -57,11 +57,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout MidisheetAudioProcessor::cre
     return {params.begin(), params.end()};
 }
 
-juce::StringArray MidisheetAudioProcessor::patternChanged() {
-    patternErrors_.clear();
-    exchange_.publish(pattern_.compile(patternErrors_));
-    ++patternVersion_;
-    return patternErrors_;
+juce::StringArray MidisheetAudioProcessor::sheetChanged() {
+    sheetErrors_.clear();
+    exchange_.publish(sheet_.compile(sheetErrors_));
+    ++sheetVersion_;
+    return sheetErrors_;
 }
 
 void MidisheetAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock) {
@@ -134,7 +134,7 @@ juce::AudioProcessorEditor* MidisheetAudioProcessor::createEditor() {
 
 void MidisheetAudioProcessor::getStateInformation(juce::MemoryBlock& destData) {
     auto state = apvts_.copyState();
-    state.setProperty("pattern", juce::JSON::toString(pattern_.toVar(), true), nullptr);
+    state.setProperty("sheet", juce::JSON::toString(sheet_.toVar(), true), nullptr);
     if (auto xml = state.createXml())
         copyXmlToBinary(*xml, destData);
 }
@@ -144,10 +144,10 @@ void MidisheetAudioProcessor::setStateInformation(const void* data, int sizeInBy
     if (xmlState == nullptr || !xmlState->hasTagName(apvts_.state.getType()))
         return;
     auto state = juce::ValueTree::fromXml(*xmlState);
-    if (state.hasProperty("pattern")) {
-        pattern_.fromVar(juce::JSON::parse(state["pattern"].toString()));
-        state.removeProperty("pattern", nullptr);
-        patternChanged();
+    if (state.hasProperty("sheet")) {
+        sheet_.fromVar(juce::JSON::parse(state["sheet"].toString()));
+        state.removeProperty("sheet", nullptr);
+        sheetChanged();
     }
     apvts_.replaceState(state);
 }

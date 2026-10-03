@@ -33,7 +33,7 @@ double nextRandom(uint32_t* rng)
 // Recursive-descent parser emitting nodes in post-order.
 class Parser {
 public:
-    Parser(std::string_view src, Program& prog) : s(src), p(prog) {}
+    Parser(std::string_view src, Program& prog, int numCols) : s(src), p(prog), cols(numCols) {}
 
     bool run(std::string& error)
     {
@@ -225,18 +225,25 @@ private:
         if (name == "RANDOM")
             return emitOp(Op::Random, {});
 
-        // Cell reference: one letter A..H then a row 1..64.
-        if (name.size() >= 2 && name[0] >= 'A' && name[0] < 'A' + kCellCols) {
+        // Cell reference: column letters (A..Z, AA..CL) then a row 1..64.
+        size_t letterEnd = 0;
+        while (letterEnd < name.size() && name[letterEnd] >= 'A' && name[letterEnd] <= 'Z')
+            ++letterEnd;
+        if (letterEnd > 0 && letterEnd < name.size()) {
             bool digits = true;
-            for (size_t i = 1; i < name.size(); ++i)
+            for (size_t i = letterEnd; i < name.size(); ++i)
                 digits &= std::isdigit(static_cast<unsigned char>(name[i])) != 0;
             if (digits) {
-                int row = std::atoi(name.c_str() + 1);
-                if (row < 1 || row > kCellRows)
+                int col = 0;
+                for (size_t i = 0; i < letterEnd; ++i)
+                    col = col * 26 + (name[static_cast<int>(i)] - 'A' + 1);
+                --col; // 0-based
+                int row = std::atoi(name.c_str() + static_cast<int>(letterEnd));
+                if (col < 0 || col >= cols || row < 1 || row > kCellRows)
                     return error("Cell out of range: " + name);
                 Program::Node n;
                 n.op = Op::Cell;
-                n.index = (name[0] - 'A') * kCellRows + (row - 1);
+                n.index = col * kCellRows + (row - 1);
                 return emit(n);
             }
         }
@@ -286,19 +293,20 @@ private:
 
     std::string s; // owned copy: null-terminated for strtod
     Program& p;
+    int cols; // sheet column count for cell reference resolution
     size_t pos = 0;
     std::string err;
 };
 
-Program Program::compile(std::string_view source, std::string& error)
+Program Program::compile(std::string_view source, std::string& error, int numCols)
 {
     error.clear();
     Program prog;
-    Parser(source, prog).run(error);
+    Parser(source, prog, numCols).run(error);
     return prog;
 }
 
-double Program::eval(Context& ctx) const
+double Program::eval(const Context& ctx) const
 {
     if (nodes.empty())
         return 0.0;
@@ -306,7 +314,7 @@ double Program::eval(Context& ctx) const
     return std::isfinite(v) ? v : 0.0;
 }
 
-double Program::evalNode(int i, Context& ctx) const
+double Program::evalNode(int i, const Context& ctx) const
 {
     const Node& n = nodes[static_cast<size_t>(i)];
     auto arg = [&](int k) { return evalNode(args[static_cast<size_t>(n.firstArg + k)], ctx); };
@@ -314,7 +322,10 @@ double Program::evalNode(int i, Context& ctx) const
     switch (n.op) {
     case Op::Const: return n.value;
     case Op::Var: return ctx.vars[n.index];
-    case Op::Cell: return ctx.cells ? ctx.cells[n.index] : 0.0;
+    case Op::Cell:
+        if (ctx.cellRef != nullptr)
+            return ctx.cellRef(ctx.sheet, n.index, ctx); // computed value of the cell
+        return ctx.cells ? ctx.cells[n.index] : 0.0;
     case Op::Random: return nextRandom(ctx.rng);
     case Op::RandRange: {
         double lo = arg(0), hi = arg(1);

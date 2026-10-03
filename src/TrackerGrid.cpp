@@ -3,11 +3,10 @@
 namespace {
 
 constexpr int kRowH = 20;
-constexpr int kHeaderH = 22;
+constexpr int kHeaderH = 30; // two lines: type + name
 constexpr int kIndexW = 34;
 constexpr int kOnW = 32;
 constexpr size_t kMaxUndo = 200;
-const char* const kLaneNames[] = {"on", "note", "vel", "gate", "len"};
 
 const juce::Colour kBg(0xff16181c), kBeat(0xff1d2026), kGridLine(0xff262a31), kText(0xffd6dbe2),
     kDim(0xff646c78), kCursor(0xffe0b050), kPlay(0xff2c4a3a), kError(0xffff7a59), kInactive(0xff101114);
@@ -33,37 +32,35 @@ TrackerGrid::TrackerGrid(MidisheetAudioProcessor& p) : proc(p)
 // ---------------------------------------------------------------------------
 // Model access
 
-juce::String* TrackerGrid::formulaRef(int r, int l)
+std::string* TrackerGrid::formulaRef(int r, int c)
 {
-    auto& step = proc.getPattern().getStep(r);
-    switch (l) {
-    case Note: return &step.noteFormula;
-    case Velocity: return &step.velocityFormula;
-    case Gate: return &step.gateFormula;
-    case Length: return &step.lengthFormula;
-    default: return nullptr;
-    }
+    auto& sheet = proc.getSheet();
+    if (c < 0 || c >= sheet.getNumColumns() || r < 0 || r >= arp::kMaxRows)
+        return nullptr;
+    // Mutable pointer to the cell's formula text. The sheet is non-const here
+    // (proc.getSheet()), so casting away the const of getCellFormula() is safe.
+    return &const_cast<std::string&>(sheet.getCellFormula(c, r));
 }
 
 juce::String TrackerGrid::cellName() const
 {
-    return juce::String(row) + " " + kLaneNames[lane];
+    return juce::String(arp::columnLetters(col)) + juce::String(row + 1);
 }
 
 juce::String TrackerGrid::cellFormula() const
 {
     auto* self = const_cast<TrackerGrid*>(this);
-    if (auto* f = self->formulaRef(row, lane))
-        return *f;
-    return proc.getPattern().getStep(row).active ? "on" : "off";
+    if (auto* f = self->formulaRef(row, col))
+        return juce::String(*f);
+    return proc.getSheet().isStepActive(row) ? "on" : "off";
 }
 
 juce::String TrackerGrid::cellError() const
 {
     auto* self = const_cast<TrackerGrid*>(this);
-    if (auto* f = self->formulaRef(row, lane); f != nullptr && f->trim().isNotEmpty()) {
+    if (auto* f = self->formulaRef(row, col); f != nullptr && !juce::String(*f).trim().isEmpty()) {
         std::string err;
-        arp::formula::Program::compile(f->toStdString(), err);
+        arp::formula::Program::compile(*f, err, proc.getSheet().getNumColumns());
         return juce::String(err);
     }
     return {};
@@ -71,35 +68,31 @@ juce::String TrackerGrid::cellError() const
 
 void TrackerGrid::edit(const std::function<void()>& change)
 {
-    undoStack.push_back(proc.getPattern());
+    undoStack.push_back(proc.getSheet());
     if (undoStack.size() > kMaxUndo)
         undoStack.erase(undoStack.begin());
     redoStack.clear();
     change();
-    proc.patternChanged(); // bumps the version; the timer refreshes the preview
+    proc.sheetChanged();
     refresh();
 }
 
 void TrackerGrid::setCellFormula(const juce::String& text)
 {
-    if (lane == On) {
-        auto t = text.trim().toLowerCase();
-        const bool on = !(t == "0" || t == "off" || t == "." || t == "false");
-        if (proc.getPattern().getStep(row).active != on)
-            toggleStep(row);
+    auto& sheet = proc.getSheet();
+    if (col < 0 || col >= sheet.getNumColumns())
         return;
-    }
-    auto* f = formulaRef(row, lane);
-    if (f == nullptr || *f == text.trim())
+    auto* f = formulaRef(row, col);
+    if (f == nullptr || *f == text.trim().toStdString())
         return;
-    edit([f, t = text.trim()] { *f = t; });
+    edit([f, t = text.trim().toStdString()] { *f = t; });
 }
 
 void TrackerGrid::toggleStep(int r)
 {
     edit([this, r] {
-        auto& s = proc.getPattern().getStep(r);
-        s.active = !s.active;
+        auto& sheet = proc.getSheet();
+        sheet.setStepActive(r, !sheet.isStepActive(r));
     });
 }
 
@@ -107,10 +100,10 @@ void TrackerGrid::undo()
 {
     if (undoStack.empty())
         return;
-    redoStack.push_back(proc.getPattern());
-    proc.getPattern() = undoStack.back();
+    redoStack.push_back(proc.getSheet());
+    proc.getSheet() = undoStack.back();
     undoStack.pop_back();
-    proc.patternChanged();
+    proc.sheetChanged();
     refresh();
 }
 
@@ -118,10 +111,10 @@ void TrackerGrid::redo()
 {
     if (redoStack.empty())
         return;
-    undoStack.push_back(proc.getPattern());
-    proc.getPattern() = redoStack.back();
+    undoStack.push_back(proc.getSheet());
+    proc.getSheet() = redoStack.back();
     redoStack.pop_back();
-    proc.patternChanged();
+    proc.sheetChanged();
     refresh();
 }
 
@@ -130,51 +123,72 @@ void TrackerGrid::redo()
 
 void TrackerGrid::refresh()
 {
-    seenVersion = proc.getPatternVersion();
+    seenVersion = proc.getSheetVersion();
+
+    auto& sheet = proc.getSheet();
+    const int numCols = sheet.getNumColumns();
 
     juce::StringArray ignored;
-    const auto compiled = proc.getPattern().compile(ignored);
+    const auto compiled = sheet.compile(ignored);
     const double defaultGate = proc.getAPVTS().getRawParameterValue("gate")->load();
+
+    // Resize preview to [row][col].
+    preview.assign(static_cast<size_t>(arp::kMaxRows), std::vector<Preview>(static_cast<size_t>(numCols)));
 
     uint32_t rng = 0x9e3779b9u;
     int prev = 0;
-    for (int r = 0; r < arp::kMaxSteps; ++r) {
-        const auto& src = proc.getPattern().getStep(r);
-        auto& out = preview[static_cast<size_t>(r)];
-        out[On] = {src.active ? "x" : ".", false, false, false};
-
+    for (int r = 0; r < arp::kMaxRows; ++r) {
         const int input = kPreviewChord[r % 3];
         const auto res = arp::evaluateStep(*compiled, r, {1, input, 100}, prev, defaultGate, &rng);
-        if (res.playable && src.active)
+        if (res.playable && sheet.isStepActive(r))
             prev = res.pitch;
 
-        const juce::String* formulas[] = {nullptr, &src.noteFormula, &src.velocityFormula, &src.gateFormula,
-                                          &src.lengthFormula};
-        for (int l = Note; l < NumLanes; ++l) {
+        for (int c = 0; c < numCols; ++c) {
             Preview pv;
-            const auto& text = *formulas[l];
-            pv.isDefault = text.trim().isEmpty();
+            const auto& meta = sheet.getColumn(c);
+            const juce::String& text = sheet.getCellFormula(c, r);
+            pv.isDefault = text.trim().isEmpty() && !sheet.hasCellValue(c, r);
             pv.isRandom = text.containsIgnoreCase("RANDOM");
-            if (!pv.isDefault) {
+            if (!pv.isDefault && text.trim().isNotEmpty()) {
                 std::string err;
-                arp::formula::Program::compile(text.toStdString(), err);
+                arp::formula::Program::compile(text.toStdString(), err, numCols);
                 pv.isError = !err.empty();
             }
             if (pv.isError) {
                 pv.text = "ERR";
             } else {
-                switch (l) {
-                case Note:
-                    pv.text = !src.active ? "---" // rest
-                            : res.playable ? juce::MidiMessage::getMidiNoteName(res.pitch, true, true, 4) : "--";
-                    break;
-                case Velocity: pv.text = juce::String(res.velocity); break;
-                case Gate: pv.text = juce::String(juce::roundToInt(res.gate * 100)) + "%"; break;
-                case Length: pv.text = juce::String(res.length, res.length == std::floor(res.length) ? 0 : 2); break;
-                default: break;
+                // Show the evaluated value for this column.
+                arp::formula::Context ctx;
+                ctx.cells = compiled->cells.data();
+                ctx.rng = &rng;
+                ctx.set(arp::formula::Var::Step, r);
+                ctx.set(arp::formula::Var::Note, input);
+                ctx.set(arp::formula::Var::Velocity, 100);
+                ctx.set(arp::formula::Var::Channel, 1);
+                ctx.set(arp::formula::Var::Prev, prev);
+                ctx.set(arp::formula::Var::Length, 1.0);
+                const double val = compiled->evaluateCell(c, r, ctx);
+                switch (meta.type) {
+                    case arp::ColumnType::Note:
+                        pv.text = val < 0 ? "---" : juce::MidiMessage::getMidiNoteName(static_cast<int>(val), true, true, 4);
+                        break;
+                    case arp::ColumnType::Velocity:
+                    case arp::ColumnType::Chance:
+                        pv.text = juce::String(juce::roundToInt(val));
+                        break;
+                    case arp::ColumnType::Gate:
+                    case arp::ColumnType::Percent:
+                        pv.text = juce::String(juce::roundToInt(val)) + "%";
+                        break;
+                    case arp::ColumnType::Length:
+                        pv.text = juce::String(val, val == std::floor(val) ? 0 : 2);
+                        break;
+                    default:
+                        pv.text = juce::String(val, val == std::floor(val) ? 0 : 2);
+                        break;
                 }
             }
-            out[static_cast<size_t>(l)] = pv;
+            preview[static_cast<size_t>(r)][static_cast<size_t>(c)] = pv;
         }
     }
     repaint();
@@ -184,7 +198,7 @@ void TrackerGrid::refresh()
 
 void TrackerGrid::timerCallback()
 {
-    if (proc.getPatternVersion() != seenVersion)
+    if (proc.getSheetVersion() != seenVersion)
         refresh(); // e.g. host loaded a preset
     const int step = proc.getPlayingStep();
     if (step != seenStep) {
@@ -218,48 +232,72 @@ void TrackerGrid::ensureVisible()
         scrollRow = row;
     else if (row >= scrollRow + vis)
         scrollRow = row - vis + 1;
-    scrollRow = juce::jlimit(0, juce::jmax(0, arp::kMaxSteps - vis), scrollRow);
+    scrollRow = juce::jlimit(0, juce::jmax(0, arp::kMaxRows - vis), scrollRow);
 }
 
-static int laneX(int lane, int width)
+// Returns the x offset of column c (0 = row index, 1 = on toggle, 2+ = sheet columns).
+static int colX(int c, int width, int numCols)
 {
-    if (lane == 0)
+    if (c == 0)
         return kIndexW;
-    const int w = (width - kIndexW - kOnW) / 4;
-    return kIndexW + kOnW + (lane - 1) * w;
+    const int dataCols = numCols + 1; // +1 for the "on" column
+    const int w = (width - kIndexW) / dataCols;
+    return kIndexW + (c - 0) * w;
 }
 
-static int laneW(int lane, int width)
+static int colW(int c, int width, int numCols)
 {
-    return lane == 0 ? kOnW : (width - kIndexW - kOnW) / 4;
+    const int dataCols = numCols + 1;
+    return (width - kIndexW) / dataCols;
 }
 
-bool TrackerGrid::cellAt(juce::Point<int> pt, int& r, int& l) const
+bool TrackerGrid::cellAt(juce::Point<int> pt, int& r, int& c) const
 {
     if (pt.y < kHeaderH || pt.x < kIndexW)
         return false;
     r = scrollRow + (pt.y - kHeaderH) / kRowH;
-    if (r >= arp::kMaxSteps)
+    if (r >= arp::kMaxRows)
         return false;
-    for (l = NumLanes - 1; l > 0 && pt.x < laneX(l, getWidth()); --l) {}
+    const int numCols = proc.getSheet().getNumColumns();
+    const int totalCols = numCols + 2; // index + on + data
+    for (c = totalCols - 1; c > 0 && pt.x < colX(c, getWidth(), numCols); --c) {}
     return true;
 }
 
 void TrackerGrid::paint(juce::Graphics& g)
 {
     const int w = getWidth();
+    auto& sheet = proc.getSheet();
+    const int numCols = sheet.getNumColumns();
+    const int totalCols = numCols + 2; // index + on + data
+
     g.fillAll(kBg);
 
-    g.setFont(mono(12.0f, true));
+    // Column headers.
+    g.setFont(mono(10.0f, true));
     g.setColour(kDim);
-    for (int l = 0; l < NumLanes; ++l)
-        g.drawText(kLaneNames[l], laneX(l, w), 0, laneW(l, w), kHeaderH, juce::Justification::centred);
+    for (int c = 0; c < totalCols; ++c) {
+        const int x = colX(c, w, numCols);
+        const int cw = colW(c, w, numCols);
+        if (c == 0) {
+            g.drawText("#", x, 0, cw, kHeaderH, juce::Justification::centred);
+        } else if (c == 1) {
+            g.drawText("on", x, 0, cw, kHeaderH, juce::Justification::centred);
+        } else {
+            const int dataCol = c - 2;
+            const auto& meta = sheet.getColumn(dataCol);
+            g.drawText(arp::columnLetters(dataCol), x, 2, cw, 12, juce::Justification::centred);
+            g.setFont(mono(9.0f));
+            g.drawText(meta.name, x, 14, cw, 14, juce::Justification::centred);
+            g.setFont(mono(10.0f, true));
+        }
+    }
 
     const int active = numActiveSteps();
     const int playing = proc.getPlayingStep();
     const int vis = visibleRows();
 
-    for (int i = 0; i <= vis && scrollRow + i < arp::kMaxSteps; ++i) {
+    for (int i = 0; i <= vis && scrollRow + i < arp::kMaxRows; ++i) {
         const int r = scrollRow + i;
         const int y = kHeaderH + i * kRowH;
         const bool inPattern = r < active;
@@ -271,40 +309,55 @@ void TrackerGrid::paint(juce::Graphics& g)
         g.setColour(r % 4 == 0 && inPattern ? kText : kDim);
         g.drawText(juce::String(r).paddedLeft('0', 2), 6, y, kIndexW - 6, kRowH, juce::Justification::centredLeft);
 
-        const bool stepOn = proc.getPattern().getStep(r).active;
-        for (int l = 0; l < NumLanes; ++l) {
-            const auto& pv = preview[static_cast<size_t>(r)][static_cast<size_t>(l)];
-            juce::Rectangle<int> cell(laneX(l, w), y, laneW(l, w), kRowH);
+        // On/off toggle.
+        const bool stepOn = sheet.isStepActive(r);
+        juce::Rectangle<int> onCell(colX(1, w, numCols), y, colW(1, w, numCols), kRowH);
+        const bool onCursor = r == row && col == 1;
+        if (onCursor) {
+            g.setColour(hasKeyboardFocus(true) ? kCursor : kCursor.withAlpha(0.4f));
+            g.fillRect(onCell.reduced(1));
+        }
+        g.setColour(stepOn ? kText : kDim);
+        g.drawText(stepOn ? "x" : ".", onCell.reduced(6, 0), juce::Justification::centred);
 
-            const bool cursor = r == row && l == lane;
+        // Data columns.
+        for (int c = 0; c < numCols; ++c) {
+            const int x = colX(c + 2, w, numCols);
+            const int cw = colW(c + 2, w, numCols);
+            const auto& pv = preview[static_cast<size_t>(r)][static_cast<size_t>(c)];
+            juce::Rectangle<int> cell(x, y, cw, kRowH);
+
+            const bool cursor = r == row && col == c + 2;
             if (cursor) {
                 g.setColour(hasKeyboardFocus(true) ? kCursor : kCursor.withAlpha(0.4f));
                 g.fillRect(cell.reduced(1));
             }
 
-            juce::Colour c = pv.isError ? kError : (pv.isDefault || !stepOn || !inPattern) ? kDim : kText;
+            juce::Colour col = pv.isError ? kError : (pv.isDefault || !stepOn || !inPattern) ? kDim : kText;
             if (cursor)
-                c = juce::Colours::black;
-            g.setColour(c);
-            g.drawText(pv.text + (pv.isRandom ? "~" : ""), cell.reduced(6, 0),
-                       l == On ? juce::Justification::centred : juce::Justification::centredLeft);
+                col = juce::Colours::black;
+            g.setColour(col);
+            g.drawText(pv.text + (pv.isRandom ? "~" : ""), cell.reduced(6, 0), juce::Justification::centredLeft);
         }
+
         g.setColour(kGridLine);
         g.drawHorizontalLine(y + kRowH - 1, 0.0f, static_cast<float>(w));
     }
 
     g.setColour(kGridLine);
-    for (int l = 0; l < NumLanes; ++l)
-        g.drawVerticalLine(laneX(l, w), 0.0f, static_cast<float>(getHeight()));
+    for (int c = 0; c < totalCols; ++c)
+        g.drawVerticalLine(colX(c, w, numCols), 0.0f, static_cast<float>(getHeight()));
 }
 
 // ---------------------------------------------------------------------------
 // Input
 
-void TrackerGrid::select(int newRow, int newLane)
+void TrackerGrid::select(int newRow, int newCol)
 {
-    row = juce::jlimit(0, arp::kMaxSteps - 1, newRow);
-    lane = juce::jlimit(0, NumLanes - 1, newLane);
+    const int numCols = proc.getSheet().getNumColumns();
+    const int totalCols = numCols + 2;
+    row = juce::jlimit(0, arp::kMaxRows - 1, newRow);
+    col = juce::jlimit(0, totalCols - 1, newCol);
     ensureVisible();
     repaint();
     if (onSelectionChanged)
@@ -319,9 +372,9 @@ bool TrackerGrid::keyPressed(const juce::KeyPress& key)
     const bool wasG = std::exchange(pendingG, false);
 
     auto requestEdit = [this](const juce::String& initial) {
-        if (lane == On)
+        if (col == 1)
             toggleStep(row);
-        else if (onEditRequested)
+        else if (col >= 2 && onEditRequested)
             onEditRequested(initial);
     };
 
@@ -335,24 +388,24 @@ bool TrackerGrid::keyPressed(const juce::KeyPress& key)
         return true;
     }
     if (mods.isCtrlDown() && (code == 'D' || code == 'U')) {
-        select(row + (code == 'D' ? 1 : -1) * visibleRows() / 2, lane);
+        select(row + (code == 'D' ? 1 : -1) * visibleRows() / 2, col);
         return true;
     }
     if (mods.isCommandDown() || mods.isCtrlDown() || mods.isAltDown())
         return false; // leave other shortcuts to the host
 
-    if (key == juce::KeyPress::upKey || ch == 'k') { select(row - 1, lane); return true; }
-    if (key == juce::KeyPress::downKey || ch == 'j') { select(row + 1, lane); return true; }
-    if (key == juce::KeyPress::leftKey || ch == 'h') { select(row, lane - 1); return true; }
-    if (key == juce::KeyPress::rightKey || ch == 'l') { select(row, lane + 1); return true; }
-    if (key == juce::KeyPress::tabKey) { select(row, lane + (mods.isShiftDown() ? -1 : 1)); return true; }
-    if (key == juce::KeyPress::pageUpKey) { select(row - visibleRows(), lane); return true; }
-    if (key == juce::KeyPress::pageDownKey) { select(row + visibleRows(), lane); return true; }
-    if (key == juce::KeyPress::homeKey) { select(0, lane); return true; }
-    if (key == juce::KeyPress::endKey || ch == 'G') { select(numActiveSteps() - 1, lane); return true; }
+    if (key == juce::KeyPress::upKey || ch == 'k') { select(row - 1, col); return true; }
+    if (key == juce::KeyPress::downKey || ch == 'j') { select(row + 1, col); return true; }
+    if (key == juce::KeyPress::leftKey || ch == 'h') { select(row, col - 1); return true; }
+    if (key == juce::KeyPress::rightKey || ch == 'l') { select(row, col + 1); return true; }
+    if (key == juce::KeyPress::tabKey) { select(row, col + (mods.isShiftDown() ? -1 : 1)); return true; }
+    if (key == juce::KeyPress::pageUpKey) { select(row - visibleRows(), col); return true; }
+    if (key == juce::KeyPress::pageDownKey) { select(row + visibleRows(), col); return true; }
+    if (key == juce::KeyPress::homeKey) { select(0, col); return true; }
+    if (key == juce::KeyPress::endKey || ch == 'G') { select(numActiveSteps() - 1, col); return true; }
     if (ch == 'g') {
         if (wasG)
-            select(0, lane);
+            select(0, col);
         else
             pendingG = true;
         return true;
@@ -363,9 +416,9 @@ bool TrackerGrid::keyPressed(const juce::KeyPress& key)
     if (ch == 'y') { clipboard = cellFormula(); return true; }
     if (ch == 'p') { setCellFormula(clipboard); return true; }
     if (ch == 'x' || key == juce::KeyPress::deleteKey || key == juce::KeyPress::backspaceKey) {
-        if (lane == On)
+        if (col == 1)
             toggleStep(row);
-        else
+        else if (col >= 2)
             setCellFormula({});
         return true;
     }
@@ -383,25 +436,25 @@ bool TrackerGrid::keyPressed(const juce::KeyPress& key)
 void TrackerGrid::mouseDown(const juce::MouseEvent& e)
 {
     grabKeyboardFocus();
-    int r, l;
-    if (!cellAt(e.getPosition(), r, l))
+    int r, c;
+    if (!cellAt(e.getPosition(), r, c))
         return;
-    select(r, l);
-    if (l == On && e.getNumberOfClicks() == 1)
+    select(r, c);
+    if (c == 1 && e.getNumberOfClicks() == 1)
         toggleStep(r);
 }
 
 void TrackerGrid::mouseDoubleClick(const juce::MouseEvent& e)
 {
-    int r, l;
-    if (cellAt(e.getPosition(), r, l) && l != On && onEditRequested)
+    int r, c;
+    if (cellAt(e.getPosition(), r, c) && c >= 2 && onEditRequested)
         onEditRequested(cellFormula());
 }
 
 void TrackerGrid::mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails& wheel)
 {
     const int vis = visibleRows();
-    scrollRow = juce::jlimit(0, juce::jmax(0, arp::kMaxSteps - vis),
+    scrollRow = juce::jlimit(0, juce::jmax(0, arp::kMaxRows - vis),
                              scrollRow - juce::roundToInt(wheel.deltaY * 12.0f));
     repaint();
 }

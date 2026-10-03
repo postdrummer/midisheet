@@ -19,3 +19,4 @@ inline int& testFailures()
 
 void runEngineTests();
 void runFormulaTests();
+void runSheetTests();

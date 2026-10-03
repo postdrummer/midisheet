@@ -6,6 +6,7 @@ int main()
 {
     runFormulaTests();
     runEngineTests();
+    runSheetTests();
     if (testFailures() == 0)
         std::puts("all tests passed");
     else
