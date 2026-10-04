@@ -167,6 +167,10 @@ void Sheet::insertRow(int row)
     if (row + 1 < kMaxRows)
         stepActive_.insert(stepActive_.begin() + row + 1, false);
     stepActive_.resize(static_cast<size_t>(kMaxRows), false);
+    // The inserted row sits inside the active range, so the range grows by
+    // one (clamped to the storage limit).
+    if (row < getNumRows() && numRows_ < kMaxRows)
+        ++numRows_;
 }
 
 void Sheet::deleteRow(int row)
@@ -183,6 +187,8 @@ void Sheet::deleteRow(int row)
     }
     stepActive_.erase(stepActive_.begin() + std::min(row, kMaxRows - 1));
     stepActive_.push_back(false);
+    if (numRows_ > 1)
+        --numRows_;
 }
 
 void Sheet::clearCell(int col, int row)

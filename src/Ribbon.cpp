@@ -38,12 +38,16 @@ Ribbon::Ribbon(MidisheetAudioProcessor& p, TrackerGrid& grid, juce::TextEditor& 
 {
     auto& t = tabs;
     t.setOutline(0);
-    t.setColour(juce::TabbedComponent::backgroundColourId, juce::Colour(0xff14171b));
+    t.setColour(juce::TabbedComponent::backgroundColourId, juce::Colour(0xff2b2b2b));
+    t.getTabbedButtonBar().setColour(juce::TabbedButtonBar::tabTextColourId, juce::Colour(0xffd6d6d6));
+    t.getTabbedButtonBar().setColour(juce::TabbedButtonBar::frontTextColourId, juce::Colours::white);
+    t.getTabbedButtonBar().setColour(juce::TabbedButtonBar::frontOutlineColourId, juce::Colour(0xff217346));
+    t.getTabbedButtonBar().setColour(juce::TabbedButtonBar::tabOutlineColourId, juce::Colours::transparentBlack);
     addAndMakeVisible(t);
 
     auto mkTab = [&](const char* name, std::function<void(RibbonTab&)> build) -> RibbonTab* {
         auto* page = new RibbonTab();
-        t.addTab(name, juce::Colour(0xff14171b), page, true);
+        t.addTab(name, juce::Colour(0xff2b2b2b), page, true);
         build(*page);
         return page;
     };
@@ -259,22 +263,22 @@ void Ribbon::buildArp(RibbonTab& tab)
 
     tab.addItem(std::make_unique<DragField>(0.0f, 0.0f, 1.0f, 2, [this](float v) {
         proc.getAPVTS().getParameter("swing")->setValueNotifyingHost(v);
-    }), 64);
+    }, "Swing"), 64);
 
     tab.addItem(std::make_unique<DragField>(50.0f, 0.0f, 100.0f, 0, [this](float v) {
         proc.getAPVTS().getParameter("gate")->setValueNotifyingHost(v / 100.0f);
-    }), 64);
+    }, "Gate"), 64);
 
     tab.addItem(std::make_unique<DragField>(1.0f, 1.0f, 8.0f, 0, [this](float v) {
         auto p = proc.getAPVTS().getParameter("octaveRange");
         p->setValueNotifyingHost((v - 1.0f) / 7.0f);
-    }), 48);
+    }, "Octave range"), 48);
 
     tab.addItem(std::make_unique<DragField>(1.0f, 0.1f, 16.0f, 1, [this](float v) {
         auto* p = proc.getAPVTS().getParameter("length");
         const juce::NormalisableRange<float> range(0.1f, 16.0f);
         p->setValueNotifyingHost(range.convertTo0to1(v));
-    }), 72);
+    }, "Length"), 72);
 }
 
 // ---------------------------------------------------------------- Formulas
@@ -386,7 +390,7 @@ void Ribbon::buildView(RibbonTab& tab)
 
     tab.addItem(std::make_unique<DragField>(1.0f, 0.5f, 3.0f, 2, [this](float v) {
         grid_.setZoom(v);
-    }), 64);
+    }, "Zoom"), 64);
 
     tab.addItem(mkBtn("Auto-fit", [this] { grid_.autoFitColumnWidths(); }), 78);
 }
@@ -400,9 +404,9 @@ void Ribbon::buildMidi(RibbonTab& tab)
     tab.addItem(mkCombo(chans, 0, [this](int idx) { proc.midiInputChannel.store(idx); }), 72);
 
     tab.addItem(std::make_unique<DragField>(0.0f, 0.0f, 127.0f, 0,
-                                            [this](float v) { proc.midiMinNote.store(static_cast<int>(v)); }), 52);
+                                            [this](float v) { proc.midiMinNote.store(static_cast<int>(v)); }, "Min note"), 52);
     tab.addItem(std::make_unique<DragField>(127.0f, 0.0f, 127.0f, 0,
-                                            [this](float v) { proc.midiMaxNote.store(static_cast<int>(v)); }), 52);
+                                            [this](float v) { proc.midiMaxNote.store(static_cast<int>(v)); }, "Max note"), 52);
 
     juce::StringArray curves{"Linear", "Soft", "Hard", "Full"};
     tab.addItem(mkCombo(curves, 0, [this](int idx) { proc.midiCurve.store(idx); }), 84);

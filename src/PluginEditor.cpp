@@ -2,8 +2,6 @@
 
 namespace {
 
-const char* const kHint = "hjkl move  i/Enter edit  = or digit: new formula  x clear  space on/off  y/p copy/paste  u undo  shift+move select range  right-click header: type/rename/hide/add/remove";
-
 } // namespace
 
 MidisheetAudioProcessorEditor::MidisheetAudioProcessorEditor(MidisheetAudioProcessor& p)
@@ -91,6 +89,11 @@ void MidisheetAudioProcessorEditor::updateStatus()
     }
 
     const auto hover = grid.hoverStatusText();
+    if (ribbonHover.isNotEmpty()) {
+        statusLabel.setText(ribbonHover, juce::dontSendNotification);
+        statusLabel.setColour(juce::Label::textColourId, juce::Colour(0xff646c78));
+        return;
+    }
     if (hover.isNotEmpty()) {
         statusLabel.setText(hover, juce::dontSendNotification);
         statusLabel.setColour(juce::Label::textColourId, juce::Colour(0xff646c78));
@@ -118,8 +121,7 @@ void MidisheetAudioProcessorEditor::updateStatus()
         }
     }
 
-    statusLabel.setText(juce::String("Ready  —  ") + kHint, juce::dontSendNotification);
-    statusLabel.setColour(juce::Label::textColourId, juce::Colour(0xff646c78));
+    statusLabel.setText({}, juce::dontSendNotification);
 }
 
 void MidisheetAudioProcessorEditor::commitFormula()
@@ -240,13 +242,31 @@ void MidisheetAudioProcessorEditor::timerCallback()
         seenZoom = grid.getZoom();
         fitHeightToRows();
     }
+
+    // Ribbon hover text: walk from the hovered component up through its
+    // SettableTooltipClient ancestors and fall back to the control's label
+    // (Button/ComboBox/ToggleButton/DragField value). Empty for components
+    // that's aren't providing any kind of hint.
+    juce::String hover;
+    if (auto* c = juce::Desktop::getInstance().findComponentAt(juce::Desktop::getInstance().getMousePosition())) {
+        for (auto* p = c; p != nullptr && p != &ribbon; p = p->getParentComponent()) {
+            if (auto* stc = dynamic_cast<juce::SettableTooltipClient*>(p))
+                if (stc->getTooltip().isNotEmpty()) { hover = stc->getTooltip(); break; }
+            if (auto* b = dynamic_cast<juce::Button*>(p)) { hover = b->getButtonText(); break; }
+            if (auto* cb = dynamic_cast<juce::ComboBox*>(p)) { hover = cb->getText(); break; }
+        }
+    }
+    if (ribbonHover != hover) {
+        ribbonHover = hover;
+        updateStatus();
+    }
 }
 
 void MidisheetAudioProcessorEditor::fitHeightToRows()
 {
-    constexpr int kChrome = 10 + 10 + (24 + 36 + 6) + (26 + 4) + (20 + 4); // margins + ribbon + bar + status
+    constexpr int kChrome = 10 + 10 + (24 + 76 + 6) + (26 + 4) + (20 + 4); // margins + ribbon + bar + status
     const int rows = processorRef.getSheet().getNumRows();
-    const int want = kChrome + grid.headerH() + rows * grid.rowH();
+    const int want = kChrome + grid.headerH() + (rows + 1) * grid.rowH(); // +1 for the "+ Add row" strip
     const int h = juce::jlimit(420, 1600, want);
     setSize(getWidth(), h);
 }
@@ -255,7 +275,7 @@ void MidisheetAudioProcessorEditor::resized() {
     auto area = getLocalBounds().reduced(10);
 
     // Ribbon tabs + current tab's band.
-    const int tabH = 24, bandH = 36;
+    const int tabH = 24, bandH = 76;
     ribbon.setBounds(area.removeFromTop(tabH + bandH));
     area.removeFromTop(6);
 

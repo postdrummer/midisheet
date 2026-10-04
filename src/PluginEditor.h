@@ -68,6 +68,10 @@ private:
 
     MidisheetAudioProcessor& processorRef;
 
+    // Ribbon hover text; refreshed by the focus sampler tick and reported
+    // through the status bar.
+    juce::String ribbonHover;
+
     // Top-of-editor controls (enabled/mode/rate + step sliders) were removed
     // for now. The APVTS parameters remain in the host layout and the engine
     // still reads them in syncSettings(), so automation/defaults still work.

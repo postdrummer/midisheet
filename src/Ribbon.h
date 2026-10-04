@@ -11,12 +11,15 @@
 
 // A compact numeric field; drag up/down to change the value.
 // Shift = x10 step, Alt/Option = x0.1 step.
-class DragField final : public juce::Component
+class DragField final : public juce::Component, public juce::SettableTooltipClient
 {
 public:
     DragField(float initial, float low, float high, int decimals,
-              std::function<void(float)> onChange)
-        : value(initial), minValue(low), maxValue(high), decimals_(decimals), onChange_(std::move(onChange)) {}
+              std::function<void(float)> onChange, const juce::String& tip = {})
+        : value(initial), minValue(low), maxValue(high), decimals_(decimals), onChange_(std::move(onChange))
+    {
+        setTooltip(tip);
+    }
 
     float getValue() const { return value; }
     void setValue(float v, bool notify = false)
@@ -79,17 +82,30 @@ public:
 
     void resized() override
     {
-        int x = 4, y = 3, h = getHeight() - 6;
-        for (auto& it : owned) {
-            if (x + it.w > getWidth() - 4) { x = 4; y += h + 4; }
-            it.c->setBounds(x, y, it.w, h);
-            x += it.w + 4;
-        }
-        for (auto& it : existing) {
-            if (x + it.w > getWidth() - 4) { x = 4; y += h + 4; }
-            it.c->setBounds(x, y, it.w, h);
-            x += it.w + 4;
-        }
+        // Excel-style: a grid of up to `rows` control lines per column.
+        const int vGap = 4;
+        const int rows = juce::jmax(1, (getHeight() + vGap) / 32);
+        const int h = (getHeight() - 8 - (rows - 1) * vGap) / rows;
+
+        auto layout = [&](std::vector<std::pair<juce::Component*, int>> items) {
+            // Items are stacked up to `rows` tall per column; a column's
+            // width is the widest control in that column.
+            int x = 4;
+            for (size_t col = 0; col < items.size(); col += size_t(rows)) {
+                int w = 0;
+                for (size_t row = 0; row < size_t(rows) && col + row < items.size(); ++row)
+                    w = juce::jmax(w, items[col + row].second);
+                for (size_t row = 0; row < size_t(rows) && col + row < items.size(); ++row)
+                    items[col + row].first->setBounds(x, 4 + int(row) * (h + vGap), items[col + row].second, h);
+                (void)w;
+                x += w + vGap;
+            }
+        };
+
+        std::vector<std::pair<juce::Component*, int>> all;
+        for (auto& it : owned) all.emplace_back(it.c.get(), it.w);
+        for (auto& it : existing) all.emplace_back(it.c, it.w);
+        layout(all);
     }
 
 private:

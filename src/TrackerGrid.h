@@ -132,6 +132,7 @@ private:
     int row = 0, col = 0, scrollRow = 0; // active cell
     int anchorRow = 0, anchorCol = 0;
     int selRowEnd = 0, selColEnd = 0; // other corner of the selection
+    int lastStripSel = 0; // 1 = last selection was via row strip, 2 = via header
     int seenVersion = -1, seenStep = -2;
     bool pendingG = false;
     juce::String clipboard; // TSV: formula-or-value per cell

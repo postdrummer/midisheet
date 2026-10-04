@@ -1,5 +1,8 @@
 #include "TrackerGrid.h"
 
+#include <algorithm>
+#include <numeric>
+
 namespace {
 
 constexpr size_t kMaxUndo = 200;
@@ -10,6 +13,7 @@ const juce::Colour kBg(0xff16181c), kBeat(0xff1d2026), kGridLine(0xff262a31), kT
 
 // Preview input: a C major triad held at velocity 100, played in Up order.
 constexpr int kPreviewChord[] = {60, 64, 67};
+constexpr int kPlusColW = 28; // trailing "+" column strip
 
 juce::Font mono(float size, bool bold = false)
 {
@@ -448,6 +452,15 @@ void TrackerGrid::autoFitColumnWidths()
                 juce::jmax(28, juce::jmin(240, juce::jmax(customColWidths[c], want)));
         }
     }
+    int total = 0;
+    for (auto v : customColWidths)
+        total += v;
+    const int avail = getWidth() - stripW() - kPlusColW;
+    if (total > avail && avail > 0) {
+        const float scale = static_cast<float>(avail) / static_cast<float>(total);
+        for (auto& v : customColWidths)
+            v = juce::jmax(28, static_cast<int>(v * scale));
+    }
     repaint();
 }
 
@@ -486,7 +499,7 @@ int TrackerGrid::colW(int c, int width, int numCols) const
     const int idx = c - 1;
     if (!customColWidths.empty() && idx >= 0 && idx < static_cast<int>(customColWidths.size()))
         return std::max(16, static_cast<int>(customColWidths[static_cast<size_t>(idx)] * zoom));
-    const int even = (width - stripW()) / std::max(1, numCols);
+    const int even = (width - stripW() - juce::jmax(28, kPlusColW)) / std::max(1, numCols);
     return std::max(16, static_cast<int>(even * zoom));
 }
 
@@ -598,7 +611,7 @@ void TrackerGrid::paint(juce::Graphics& g)
         if (r == playing)
             g.setColour(playheadColour);
         g.setFont(mono(13.0f));
-        g.drawText(juce::String(r).paddedLeft('0', 2), 6, y, stripW() - 6, rowH(), juce::Justification::centredLeft);
+        g.drawText(juce::String(r + 1).paddedLeft('0', 2), 6, y, stripW() - 6, rowH(), juce::Justification::centredLeft);
 
         // Data columns.
         for (int c = 0; c < numCols; ++c) {
@@ -670,6 +683,20 @@ void TrackerGrid::paint(juce::Graphics& g)
         }
     }
 
+    // "+ column" strip on the right of the data area.
+    {
+        const int px = colX(totalCols, w, numCols);
+        if (px < w) {
+            g.setColour(juce::Colour(0xff2a2f38));
+            g.fillRect(px, 0, w - px, headerH());
+            g.setColour(kDim);
+            g.setFont(mono(14.0f, true));
+            g.drawText("+", px, 0, w - px, headerH(), juce::Justification::centred);
+            g.setColour(juce::Colour(0xff191d24));
+            g.fillRect(px, headerH(), w - px, getHeight() - headerH());
+        }
+    }
+
     // Active-cell outline, drawn after gridlines so none of its sides is
     // overpainted by the gutters.
     const int numColsNow = sheet.getNumColumns();
@@ -704,6 +731,78 @@ bool TrackerGrid::keyPressed(const juce::KeyPress& key)
 
     if (mods.isCommandDown() && code == 'C') { copySelection(); return true; }
     if (mods.isCommandDown() && code == 'V') { pasteIntoSelection(); return true; }
+
+    // Cmd+Shift+= / Cmd+Shift+- add or remove rows / columns for the last-
+    // selected strip dimension. Falls back to the current cell dimension.
+    if (mods.isCommandDown() && mods.isShiftDown()) {
+        const bool wantAdd = (ch == '+' || ch == '=');
+        const bool wantDel = (ch == '-' || ch == '_' || code == juce::KeyPress::deleteKey || code == juce::KeyPress::backspaceKey);
+        if (wantAdd || wantDel) {
+            const int kind = lastStripSel;
+            const int nr = proc.getSheet().getNumRows();
+            const int nc = proc.getSheet().getNumColumns();
+            const auto selR = selRows();
+            const auto selC = selCols();
+            const int sr0 = selR.first, sr1 = selR.second;
+            const int sc0 = selC.first, sc1 = selC.second;
+            const bool wholeCols = (sc1 - sc0 + 1) >= nc && (sr0 == 0 && sr1 + 1 >= nr);
+            (void)wholeCols;
+            if (kind == 2 || (kind == 0 && (sc1 - sc0 + 1) < (sr1 - sr0 + 1))) {
+                // Column path.
+                const int count = sc1 - sc0 + 1; // number of columns
+                const int dc0 = sc0 - 1;         // sheet data-column index
+                if (dc0 < 0)
+                    return true;
+                if (wantDel) {
+                    performEdit([this, dc0, count] {
+                        for (int i = 0; i < count; ++i)
+                            proc.getSheet().removeColumn(dc0);
+                    });
+                } else {
+                    const int a = (sc0 - 1);
+                    performEdit([this, a, count] {
+                        auto& s = proc.getSheet();
+                        for (int i = 0; i < count; ++i) {
+                            const int added = s.addColumn(arp::ColumnType::Number, "Custom");
+                            s.moveColumn(added, a);
+                        }
+                    });
+                }
+                const int total = proc.getSheet().getNumColumns() + 1;
+                col = juce::jlimit(1, total - 1, col);
+            } else {
+                // Row path.
+                const int count = sr1 - sr0 + 1;
+                if (wantDel) {
+                    performEdit([this, sr0, count] {
+                        for (int i = 0; i < count; ++i)
+                            proc.getSheet().deleteRow(sr0);
+                    });
+                } else {
+                    performEdit([this, sr0, count] {
+                        auto& s = proc.getSheet();
+                        for (int i = 0; i < count; ++i) {
+                            if (sr0 <= 0) {
+                                s.insertRow(0);
+                                s.moveRow(1, 0);
+                            } else {
+                                s.insertRow(sr0 - 1);
+                            }
+                        }
+                    });
+                }
+                row = juce::jlimit(0, proc.getSheet().getNumRows() - 1, row);
+                // Anchor/selection keep following the moved rows.
+                anchorRow = row;
+                selRowEnd = row;
+            }
+            ensureVisible();
+            repaint();
+            if (onSelectionChanged)
+                onSelectionChanged();
+            return true;
+        }
+    }
 
     // Undo/redo: vim and platform shortcuts.
     if ((mods.isCommandDown() && code == 'Z' && mods.isShiftDown()) || (mods.isCtrlDown() && code == 'R')) {
@@ -774,8 +873,16 @@ void TrackerGrid::mouseDown(const juce::MouseEvent& e)
             const auto& sheet = proc.getSheet();
             auto* m = new juce::PopupMenu();
             auto* typeSub = new juce::PopupMenu();
-            for (int i = 0; i < 12; ++i)
-                typeSub->addItem(100 + i, arp::columnTypeName(static_cast<arp::ColumnType>(i)));
+            {
+                std::array<int, 12> order{};
+                std::iota(order.begin(), order.end(), 0);
+                std::sort(order.begin(), order.end(), [](int a, int b) {
+                    return juce::String(arp::columnTypeName(static_cast<arp::ColumnType>(a))) <
+                           juce::String(arp::columnTypeName(static_cast<arp::ColumnType>(b)));
+                });
+                for (int idx : order)
+                    typeSub->addItem(100 + idx, arp::columnTypeName(static_cast<arp::ColumnType>(idx)));
+            }
             m->addItem(1, "Rename...");
             m->addSubMenu("Type", *typeSub);
             m->addItem(2, sheet.getColumn(c).visible ? "Hide column" : "Show column");
@@ -803,30 +910,65 @@ void TrackerGrid::mouseDown(const juce::MouseEvent& e)
                 } else if (result == 2) {
                     edit([this, c] {
                         auto& s = proc.getSheet();
-                        s.setColumnVisible(c, !s.getColumn(c).visible);
+                        const auto sc = selCols();
+                        const bool inSel = c + 1 >= sc.first && c + 1 <= sc.second;
+                        const int first = inSel ? sc.first : c + 1;
+                        const int last = inSel ? sc.second : c + 1;
+                        for (int i = first; i <= last; ++i) {
+                            const int dc = i - 1;
+                            s.setColumnVisible(dc, !s.getColumn(dc).visible);
+                        }
                     });
                 } else if (result >= 100 && result < 112) {
                     edit([this, c, result] {
                         auto& s = proc.getSheet();
-                        s.setColumnType(c, static_cast<arp::ColumnType>(result - 100));
+                        const auto sc = selCols();
+                        const bool inSel = c + 1 >= sc.first && c + 1 <= sc.second;
+                        const int first = inSel ? sc.first : c + 1;
+                        const int last = inSel ? sc.second : c + 1;
+                        for (int i = first; i <= last; ++i)
+                            s.setColumnType(i - 1, static_cast<arp::ColumnType>(result - 100));
                     });
                 } else if (result == 3) {
                     edit([this, c] {
                         auto& s = proc.getSheet();
-                        const int added = s.addColumn(arp::ColumnType::Number, "Custom");
-                        s.moveColumn(added, c);
+                        const auto sc = selCols();
+                        const bool inSel = c + 1 >= sc.first && c + 1 <= sc.second;
+                        const int first = inSel ? sc.first : c + 1;
+                        const int last = inSel ? sc.second : c + 1;
+                        const int d0 = first - 1;
+                        const int count = last - first + 1;
+                        for (int i = 0; i < count; ++i) {
+                            const int added = s.addColumn(arp::ColumnType::Number, "Custom");
+                            s.moveColumn(added, d0 + i);
+                        }
                     });
-                } else if (result == 4) {
-                    edit([this, c] {
-                        auto& s = proc.getSheet();
-                        const int added = s.addColumn(arp::ColumnType::Number, "Custom");
-                        s.moveColumn(added, c + 1);
-                    });
-                } else if (result == 5) {
-                    edit([this, c] { proc.getSheet().removeColumn(c); });
-                    const int total = proc.getSheet().getNumColumns() + 1;
-                    col = juce::jlimit(1, total - 1, col);
-                }
+                 } else if (result == 4) {
+                     edit([this, c] {
+                         auto& s = proc.getSheet();
+                         const auto [cs0, cs1] = selCols();
+                         const int d0 = cs0 - 1, d1 = cs1 - 1;
+                         const int count = juce::jmax(1, d1 - d0 + 1);
+                         for (int i = 0; i < count; ++i) {
+                             const int added = s.addColumn(arp::ColumnType::Number, "Custom");
+                             s.moveColumn(added, d1 + 1 + i);
+                         }
+                     });
+                 } else if (result == 5) {
+                     edit([this, c] {
+                         auto& s = proc.getSheet();
+                         const auto [cs0, cs1] = selCols();
+                         const auto sc = selCols();
+                         const int dc = c;
+                         const bool inSel = dc + 1 >= sc.first && dc + 1 <= sc.second;
+                         int count = inSel ? (sc.second - sc.first + 1) : 1;
+                         int start = inSel ? (sc.first - 1) : dc;
+                         for (int i = 0; i < count; ++i)
+                             s.removeColumn(start);
+                     });
+                     const int total = proc.getSheet().getNumColumns() + 1;
+                     col = juce::jlimit(1, total - 1, col);
+                 }
                 delete typeSub;
                 delete m;
             }));
@@ -840,7 +982,11 @@ void TrackerGrid::mouseDown(const juce::MouseEvent& e)
         const int r = scrollRow + static_cast<int>(e.position.y - headerH()) / rowH();
         if (r < 0 || r >= proc.getSheet().getNumRows())
             return;
-        auto& sheet = proc.getSheet();
+        const auto& sheet = proc.getSheet();
+        const auto sselRows = selRows();
+        const int rangeFirst = (r >= sselRows.first && r <= sselRows.second) ? sselRows.first : r;
+        const int rangeLast = (r >= sselRows.first && r <= sselRows.second) ? sselRows.second : r;
+        const int rangeCount = rangeLast - rangeFirst + 1;
         auto* m = new juce::PopupMenu();
         m->addItem(1, "Insert row below");
         m->addItem(2, "Insert row above");
@@ -849,42 +995,56 @@ void TrackerGrid::mouseDown(const juce::MouseEvent& e)
         m->addItem(4, "Move row up", r > 0);
         m->addItem(5, "Move row down", r < sheet.getNumRows() - 1);
         m->addSeparator();
-        m->addItem(6, sheet.isRowHidden(r) ? "Show row" : "Hide row");
+        m->addItem(6, sheet.isRowHidden(rangeFirst) ? "Show row" : "Hide row");
         m->addSeparator();
         m->addItem(7, "Copy row");
         m->addItem(8, "Paste row");
         const auto screenPos = localPointToGlobal(e.position).toInt();
         auto options = juce::PopupMenu::Options().withTargetComponent(this).withTargetScreenArea(
             juce::Rectangle<int>(screenPos.x, screenPos.y, 1, 1));
-        m->showMenuAsync(options, juce::ModalCallbackFunction::create([this, m, r](int result) {
+        m->showMenuAsync(options, juce::ModalCallbackFunction::create([this, m, r, rangeFirst, rangeLast, rangeCount](int result) {
             auto doEdit = [this](const std::function<void()>& fn) { performEdit(fn); };
             switch (result) {
                 case 1:
-                    doEdit([this, r] { proc.getSheet().insertRow(r); });
-                    selectCell(std::min(r + 1, proc.getSheet().getNumRows() - 1), col);
+                    doEdit([this, rangeLast, rangeCount] {
+                        auto& s = proc.getSheet();
+                        for (int i = 0; i < rangeCount; ++i)
+                            s.insertRow(rangeLast);
+                    });
+                    selectCell(std::min(rangeLast + rangeCount, proc.getSheet().getNumRows() - 1), col);
                     break;
                 case 2:
-                    doEdit([this, r] {
+                    doEdit([this, rangeFirst, rangeCount] {
                         auto& s = proc.getSheet();
-                        s.insertRow(r); // blank after r; move same pattern
-                        s.moveRow(juce::jmin(r + 1, s.getNumRows() - 1), r);
+                        for (int i = 0; i < rangeCount; ++i) {
+                            s.insertRow(rangeFirst);
+                            s.moveRow(rangeFirst + 1, rangeFirst);
+                        }
                     });
-                    selectCell(r, col);
+                    selectCell(rangeFirst, col);
                     break;
                 case 3:
-                    doEdit([this, r] { proc.getSheet().deleteRow(r); });
-                    selectCell(juce::jmin(r, proc.getSheet().getNumRows() - 1), col);
+                    doEdit([this, rangeFirst, rangeCount] {
+                        for (int i = 0; i < rangeCount; ++i)
+                            proc.getSheet().deleteRow(rangeFirst);
+                    });
+                    selectCell(juce::jmin(rangeFirst, proc.getSheet().getNumRows() - 1), col);
                     break;
                 case 4:
-                    doEdit([this, r] { proc.getSheet().moveRow(r, r - 1); });
-                    selectCell(r - 1, col);
+                    doEdit([this, rangeFirst] { proc.getSheet().moveRow(rangeFirst, rangeFirst - 1); });
+                    selectCell(rangeFirst - 1, col);
                     break;
                 case 5:
-                    doEdit([this, r] { proc.getSheet().moveRow(r, r + 1); });
-                    selectCell(r + 1, col);
+                    doEdit([this, rangeLast] { proc.getSheet().moveRow(rangeLast, rangeLast + 1); });
+                    selectCell(rangeLast + 1, col);
                     break;
                 case 6:
-                    doEdit([this, r] { proc.getSheet().setRowHidden(r, !proc.getSheet().isRowHidden(r)); });
+                    doEdit([this, rangeFirst, rangeLast, sheet_hidden = proc.getSheet().isRowHidden(rangeFirst)] {
+                        auto& sh = proc.getSheet();
+                        const bool target = !sheet_hidden;
+                        for (int i = rangeFirst; i <= rangeLast; ++i)
+                            sh.setRowHidden(i, target);
+                    });
                     break;
                 case 7: copyRowText(r); break;
                 case 8: pasteRowText(r); break;
@@ -901,6 +1061,16 @@ void TrackerGrid::mouseDown(const juce::MouseEvent& e)
         const int ay = headerH() + (nr - scrollRow) * rowH();
         if (e.position.y >= ay && e.position.y < ay + rowH() && e.position.x >= stripW()) {
             performEdit([this] { proc.getSheet().setNumRows(proc.getSheet().getNumRows() + 1); });
+            return;
+        }
+    }
+
+    // --- "+ Add column" stripe click. ---
+    {
+        const int numColsNow = proc.getSheet().getNumColumns();
+        const int px = colX(numColsNow + 1, getWidth(), numColsNow);
+        if (e.position.x >= px) {
+            performEdit([this] { proc.getSheet().addColumn(arp::ColumnType::Number, "Custom"); });
             return;
         }
     }
@@ -937,6 +1107,7 @@ void TrackerGrid::mouseDown(const juce::MouseEvent& e)
                 selRowEnd = proc.getSheet().getNumRows() - 1;
                 selColEnd = gc;
             }
+            lastStripSel = 2;
             row = 0;
             col = gc;
             ensureVisible();
@@ -963,6 +1134,7 @@ void TrackerGrid::mouseDown(const juce::MouseEvent& e)
             selColEnd = numCols;
             selRowEnd = r;
         }
+        lastStripSel = 1;
         row = r;
         col = 1;
         ensureVisible();
@@ -999,8 +1171,19 @@ void TrackerGrid::mouseDrag(const juce::MouseEvent& e)
         }
     }
 
-    if (e.position.y < headerH() || e.position.x < stripW())
+    if (e.position.y < headerH() || e.position.x < stripW()) {
+        // Dragging within the row-number strip extends the row selection.
+        if (e.position.y >= headerH() && e.position.x < stripW()) {
+            const int rr = juce::jlimit(0, proc.getSheet().getNumRows() - 1,
+                                        scrollRow + static_cast<int>(e.position.y - headerH()) / rowH());
+            selRowEnd = rr;
+            row = rr;
+            repaint();
+            if (onSelectionChanged)
+                onSelectionChanged();
+        }
         return;
+    }
     int r, c;
     if (!cellAt(e.position, r, c))
         return;
