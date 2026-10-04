@@ -46,6 +46,15 @@ public:
     juce::AudioProcessorValueTreeState& getAPVTS() { return apvts_; }
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
+    // MIDI-tab front panel settings (see private members below)
+    std::atomic<int> midiInputChannel { 0 };  // 0 = All
+    std::atomic<int> midiMinNote { 0 };
+    std::atomic<int> midiMaxNote { 127 };
+    std::atomic<int> midiCurve { 0 };
+    std::atomic<int> midiOutputChannel { 1 };
+    std::atomic<int> midiRouting { 0 };        // 0 = replace, 1 = augment
+    std::atomic<bool> midiThru { false };
+
 private:
     static BusesProperties makeBuses();
     void syncSettings();

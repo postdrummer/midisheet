@@ -84,6 +84,72 @@ void testMultiLetterCellRefs()
     CHECK(eval("=AA1+AB2", ctx) == 50);
 }
 
+void testAbsoluteRefs()
+{
+    double cells[kMaxColumns * kCellRows] = {};
+    cells[0] = 10; // A1
+    Context ctx;
+    ctx.cells = cells;
+    CHECK(eval("=$A$1", ctx) == 10);
+    CHECK(eval("=$A1+A$1", ctx) == 20); // $ is optional syntax only
+}
+
+void testNameRefs()
+{
+    double cells[kMaxColumns * kCellRows] = {};
+    cells[0] = 60;          // Note row 0
+    cells[kCellRows] = 7;   // Shift row 0
+    cells[2 * kCellRows] = 1; // Octave row 0
+    Context ctx;
+    ctx.cells = cells;
+    ctx.set(Var::Step, 0);
+    std::vector<std::string> names = {"Note", "Shift", "Octave"};
+    std::string err;
+    auto prog = Program::compile("=Note[ROW]+Shift[STEP]+Octave[0]*12", err, kMaxColumns, &names);
+    CHECK(err.empty());
+    if (!err.empty())
+        std::fprintf(stderr, "  name ref compile error: %s\n", err.c_str());
+    CHECK(prog.eval(ctx) == 60 + 7 + 12);
+
+    // Case-insensitive column names.
+    prog = Program::compile("=note[row]", err, kMaxColumns, &names);
+    CHECK(err.empty());
+    CHECK(prog.eval(ctx) == 60);
+
+    // Unknown column name is a compile error.
+    prog = Program::compile("=Bogus[0]", err, kMaxColumns, &names);
+    CHECK(!err.empty());
+    // Without a name list, name refs are an error too.
+    auto p2 = Program::compile("=Note[0]", err, kMaxColumns);
+    CHECK(!err.empty());
+}
+
+void testNoteNames()
+{
+    // C4 = 60 reference point.
+    CHECK(eval("=NOTE(\"C4\")") == 60);
+    CHECK(eval("=NOTE(\"A4\")") == 69);
+    CHECK(eval("=NOTE(\"C3\")") == 48);
+    CHECK(eval("=NOTE(\"F#4\")") == 66);
+    CHECK(eval("=NOTE(\"Bb2\")") == 46);
+    CHECK(eval("=NOTE(\"A0\")") == 21);
+    CHECK(eval("=NOTE(\"Bb2\")+NOTE(\"C4\")") == 106);
+
+    // Zero-arg NOTE()/PREV() mirror the variables.
+    Context ctx;
+    ctx.set(Var::Note, 64);
+    ctx.set(Var::Prev, 60);
+    CHECK(eval("=NOTE()+2", ctx) == 66);
+    CHECK(eval("=PREV()+12", ctx) == 72);
+
+    // RAND aliases RANDOM.
+    uint32_t rng = 7;
+    Context r2;
+    r2.rng = &rng;
+    CHECK(eval("=RAND()", r2) >= 0.0);
+    CHECK(eval("=RAND(1,2)", r2) >= 1.0);
+}
+
 void testRandom()
 {
     uint32_t rng = 12345;
@@ -125,4 +191,7 @@ void runFormulaTests()
     testMultiLetterCellRefs();
     testRandom();
     testErrors();
+    testAbsoluteRefs();
+    testNameRefs();
+    testNoteNames();
 }

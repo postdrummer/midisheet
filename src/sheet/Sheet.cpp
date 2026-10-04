@@ -4,6 +4,23 @@
 
 namespace arp {
 
+namespace {
+
+// "  C3 " -> "C3"; "=C3" -> "C3" (optional leading '=').
+std::string stripWrap(const std::string& f)
+{
+    size_t a = f.find_first_not_of(" \t");
+    if (a == std::string::npos)
+        return {};
+    size_t b = f.find_last_not_of(" \t");
+    auto t = f.substr(a, b - a + 1);
+    if (!t.empty() && t[0] == '=')
+        t = t.substr(1);
+    return t;
+}
+
+} // namespace
+
 Sheet::Sheet()
 {
     setupDefaultSheet();
@@ -17,7 +34,7 @@ int Sheet::addColumn(ColumnType type, const std::string& name)
     Column c;
     c.type = type;
     c.name = !name.empty() ? name : columnTypeName(type);
-    c.defaultValue = type == ColumnType::Velocity ? 100.0
+    c.defaultValue = type == ColumnType::Velocity ? -1.0 // <0 = pass the incoming velocity through
                         : type == ColumnType::Percent || type == ColumnType::Chance ? 100.0
                         : 0.0;
     columns_.push_back(c);
@@ -135,6 +152,39 @@ void Sheet::setCellFormula(int col, int row, const std::string& formula)
     hasValues_[static_cast<size_t>(col)][static_cast<size_t>(row)] = false;
 }
 
+void Sheet::insertRow(int row)
+{
+    if (row < 0 || row >= kMaxRows)
+        return;
+    for (int c = 0; c < getNumColumns(); ++c) {
+        values_[static_cast<size_t>(c)].insert(values_[static_cast<size_t>(c)].begin() + row + 1, 0.0);
+        values_[static_cast<size_t>(c)].pop_back();
+        hasValues_[static_cast<size_t>(c)].insert(hasValues_[static_cast<size_t>(c)].begin() + row + 1, false);
+        hasValues_[static_cast<size_t>(c)].pop_back();
+        formulas_[static_cast<size_t>(c)].insert(formulas_[static_cast<size_t>(c)].begin() + row + 1, {});
+        formulas_[static_cast<size_t>(c)].pop_back();
+    }
+    if (row + 1 < kMaxRows)
+        stepActive_.insert(stepActive_.begin() + row + 1, false);
+    stepActive_.resize(static_cast<size_t>(kMaxRows), false);
+}
+
+void Sheet::deleteRow(int row)
+{
+    if (row < 0 || row >= kMaxRows)
+        return;
+    for (int c = 0; c < getNumColumns(); ++c) {
+        values_[static_cast<size_t>(c)].erase(values_[static_cast<size_t>(c)].begin() + row);
+        hasValues_[static_cast<size_t>(c)].erase(hasValues_[static_cast<size_t>(c)].begin() + row);
+        formulas_[static_cast<size_t>(c)].erase(formulas_[static_cast<size_t>(c)].begin() + row);
+        values_[static_cast<size_t>(c)].push_back(0.0);
+        hasValues_[static_cast<size_t>(c)].push_back(false);
+        formulas_[static_cast<size_t>(c)].push_back({});
+    }
+    stepActive_.erase(stepActive_.begin() + std::min(row, kMaxRows - 1));
+    stepActive_.push_back(false);
+}
+
 void Sheet::clearCell(int col, int row)
 {
     if (col < 0 || col >= getNumColumns() || row < 0 || row >= kMaxRows)
@@ -182,6 +232,39 @@ bool Sheet::isStepActive(int row) const
     return stepActive_[static_cast<size_t>(row)];
 }
 
+void Sheet::setRowHidden(int row, bool hidden)
+{
+    if (row < 0 || row >= kMaxRows)
+        return;
+    rowHidden_[static_cast<size_t>(row)] = hidden;
+}
+
+bool Sheet::isRowHidden(int row) const
+{
+    if (row < 0 || row >= kMaxRows)
+        return false;
+    return rowHidden_[static_cast<size_t>(row)];
+}
+
+void Sheet::moveRow(int from, int to)
+{
+    if (from < 0 || from >= kMaxRows || to < 0 || to >= kMaxRows || from == to)
+        return;
+    auto mv = [](auto& v, int f, int t) {
+        auto it = v.begin() + f;
+        auto val = std::move(*it);
+        v.erase(it);
+        v.insert(v.begin() + t, std::move(val));
+    };
+    for (int c = 0; c < getNumColumns(); ++c) {
+        mv(values_[static_cast<size_t>(c)], from, to);
+        mv(hasValues_[static_cast<size_t>(c)], from, to);
+        mv(formulas_[static_cast<size_t>(c)], from, to);
+    }
+    mv(stepActive_, from, to);
+    mv(rowHidden_, from, to);
+}
+
 // ---------------------------------------------------------------------------
 // Compile
 
@@ -189,7 +272,10 @@ std::unique_ptr<CompiledSheet> Sheet::compile(juce::StringArray& errors) const
 {
     auto out = std::make_unique<CompiledSheet>();
     out->numCols = getNumColumns();
-    out->numRows = kMaxRows;
+    out->numRows = kMaxRows; // storage stride stays the compile-time panel
+    out->numSteps = getNumRows();
+
+    const auto colNames = getColumnNames();
 
     for (int c = 0; c < out->numCols; ++c) {
         const auto& src = columns_[static_cast<size_t>(c)];
@@ -201,12 +287,22 @@ std::unique_ptr<CompiledSheet> Sheet::compile(juce::StringArray& errors) const
 
         // Column default formula.
         if (!src.defaultFormula.empty()) {
-            std::string err;
-            out->columnDefaultPrograms[static_cast<size_t>(c)] =
-                std::make_unique<formula::Program>(
-                    formula::Program::compile(src.defaultFormula, err, out->numCols));
-            if (!err.empty())
-                errors.add(columnLetters(c) + ": " + err);
+            // In a Note column the default may be a note name ("=C3").
+            bool noteDefault = false;
+            if (src.type == ColumnType::Note) {
+                if (const double nn = formula::parseNoteName(stripWrap(src.defaultFormula)); nn >= 0.0) {
+                    dst.defaultValue = nn;
+                    noteDefault = true;
+                }
+            }
+            if (!noteDefault) {
+                std::string err;
+                out->columnDefaultPrograms[static_cast<size_t>(c)] =
+                    std::make_unique<formula::Program>(
+                        formula::Program::compile(src.defaultFormula, err, out->numCols, &colNames));
+                if (!err.empty())
+                    errors.add(columnLetters(c) + ": " + err);
+            }
         }
 
         // Per-cell data.
@@ -217,9 +313,18 @@ std::unique_ptr<CompiledSheet> Sheet::compile(juce::StringArray& errors) const
 
             const auto& f = formulas_[static_cast<size_t>(c)][static_cast<size_t>(r)];
             if (!f.empty()) {
+                // In a Note column, a bare note name stored as the cell text
+                // ("C3", "=F#4") means that note, not a reference to cell C3.
+                if (src.type == ColumnType::Note) {
+                    if (const double nn = formula::parseNoteName(stripWrap(f)); nn >= 0.0) {
+                        out->cells[static_cast<size_t>(idx)] = nn;
+                        out->hasValue[static_cast<size_t>(idx)] = true;
+                        continue;
+                    }
+                }
                 std::string err;
                 out->cellPrograms[static_cast<size_t>(idx)] = std::make_unique<formula::Program>(
-                    formula::Program::compile(f, err, out->numCols));
+                    formula::Program::compile(f, err, out->numCols, &colNames));
                 if (!err.empty())
                     errors.add(columnLetters(c) + std::to_string(r + 1) + ": " + err);
             }
@@ -271,6 +376,13 @@ juce::var Sheet::toVar() const
         if (stepActive_[static_cast<size_t>(r)])
             active.add(r + 1);
     root->setProperty("activeSteps", active);
+
+    root->setProperty("numRows", numRows_);
+    juce::Array<juce::var> hid;
+    for (int r = 0; r < kMaxRows; ++r)
+        if (rowHidden_[static_cast<size_t>(r)])
+            hid.add(r + 1);
+    root->setProperty("hiddenRows", hid);
 
     return juce::var(root);
 }
@@ -332,6 +444,15 @@ void Sheet::fromVar(const juce::var& v)
                 stepActive_[static_cast<size_t>(r)] = true;
         }
 
+    if (v.hasProperty("numRows"))
+        numRows_ = std::clamp(static_cast<int>(v["numRows"]), 1, kMaxRows);
+    if (auto* hid = v["hiddenRows"].getArray())
+        for (int i = 0; i < hid->size(); ++i) {
+            int r = static_cast<int>(hid->getReference(i)) - 1;
+            if (r >= 0 && r < kMaxRows)
+                rowHidden_[static_cast<size_t>(r)] = true;
+        }
+
     if (columns_.empty())
         setupDefaultSheet();
 }
@@ -364,10 +485,10 @@ void Sheet::setupDefaultSheet()
         return c;
     };
 
-    add(ColumnType::Note, "Note", false, -1.0); // hidden: pass through incoming note
+    add(ColumnType::Note, "Pitch", true, -1.0); // leftmost; value >= 0 selects this step's note
     add(ColumnType::Shift, "Shift", true, 0.0);
     add(ColumnType::Octave, "Octave", true, 0.0);
-    add(ColumnType::Velocity, "Velocity", true, 100.0, "=IF(MOD(STEP,4)=0,127,80)");
+    add(ColumnType::Velocity, "Velocity", true, -1.0); // visible, but <0 passes the incoming velocity through
     add(ColumnType::Gate, "Gate", true, 50.0);
     add(ColumnType::Length, "Length", true, 1.0, "=IF(MOD(STEP,8)=7,2,1)");
     add(ColumnType::Time, "Time", false, 0.0);
@@ -375,6 +496,8 @@ void Sheet::setupDefaultSheet()
 
     // All steps active by default.
     stepActive_.assign(static_cast<size_t>(kMaxRows), true);
+    rowHidden_.assign(static_cast<size_t>(kMaxRows), false);
+    numRows_ = 16;
 }
 
 } // namespace arp

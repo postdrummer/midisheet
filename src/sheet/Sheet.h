@@ -43,7 +43,15 @@ public:
     void setColumnCCNumber(int col, int cc);
 
     int getNumColumns() const { return static_cast<int>(columns_.size()); }
-    int getNumRows() const { return kMaxRows; }
+    void setNumRows(int n) { numRows_ = std::clamp(n, 1, kMaxRows); }
+    int getNumRows() const { return numRows_; }
+    std::vector<std::string> getColumnNames() const
+    {
+        std::vector<std::string> out;
+        for (const auto& c : columns_)
+            out.push_back(c.name);
+        return out;
+    }
 
     Column& getColumn(int index);
     const Column& getColumn(int index) const;
@@ -57,6 +65,8 @@ public:
     void setCell(int col, int row, double value);
     void setCellFormula(int col, int row, const std::string& formula);
     void clearCell(int col, int row);
+    void insertRow(int row); // inserts an inactive row at row+1; steps clamp at kMaxRows
+    void deleteRow(int row);
 
     double getCellValue(int col, int row) const;
     const std::string& getCellFormula(int col, int row) const;
@@ -66,6 +76,10 @@ public:
 
     void setStepActive(int row, bool active);
     bool isStepActive(int row) const;
+
+    void setRowHidden(int row, bool hidden);
+    bool isRowHidden(int row) const;
+    void moveRow(int from, int to);
 
     // --- Compile -----------------------------------------------------------
 
@@ -87,6 +101,8 @@ private:
     std::vector<std::vector<bool>> hasValues_;
     std::vector<std::vector<std::string>> formulas_;
     std::vector<bool> stepActive_;
+    std::vector<bool> rowHidden_;
+    int numRows_ = 16; // visible/playable rows; storage is always kMaxRows
 
     void setupDefaultSheet();
 };

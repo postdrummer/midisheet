@@ -47,9 +47,10 @@ void testColumnVisibility()
     CHECK(sheet.getColumn(c).visible);
     sheet.setColumnVisible(c, false);
     CHECK(!sheet.getColumn(c).visible);
-    CHECK(sheet.findColumnByType(ColumnType::Note) == -1); // hidden = not found
+    // With the default sheet, the first match of Note is its col 0.
+    CHECK(sheet.findColumnByType(ColumnType::Note) == 0);
     sheet.setColumnVisible(c, true);
-    CHECK(sheet.findColumnByType(ColumnType::Note) == c);
+    CHECK(sheet.findColumnByType(ColumnType::Note) == 0);
 }
 
 void testColumnDefaultValue()
@@ -256,14 +257,14 @@ void testDefaultSheet()
     CHECK(sheet.findColumnByType(ColumnType::Time, false) >= 0);
     CHECK(sheet.findColumnByType(ColumnType::Chance, false) >= 0);
 
-    // Note/Time/Chance start hidden (pass-through / inactive), so a
+    // Time/Chance start hidden (pass-through / inactive), so a
     // visibility-filtered lookup finds nothing for them.
-    CHECK(sheet.findColumnByType(ColumnType::Note) == -1);
     CHECK(sheet.findColumnByType(ColumnType::Time) == -1);
     CHECK(sheet.findColumnByType(ColumnType::Chance) == -1);
+    CHECK(sheet.findColumnByType(ColumnType::Note) != -1); // Pitch is visible
 
     CHECK(sheet.getColumn(0).type == ColumnType::Note);
-    CHECK(!sheet.getColumn(0).visible); // hidden: incoming note passes through
+    CHECK(sheet.getColumn(0).visible); // Pitch column: leftmost data column
 }
 
 // ---------------------------------------------------------------------------
@@ -288,6 +289,86 @@ void testCircularCellRefs()
     CHECK(std::isfinite(compiled->evaluateCell(b, 0, ctx)));
 }
 
+void testCrossColumnRefsAndLeftToRight()
+{
+    Sheet sheet;
+    const int note = sheet.findColumnByType(ColumnType::Note, false);
+    const int shift = sheet.findColumnByType(ColumnType::Shift, false);
+    const int oct = sheet.findColumnByType(ColumnType::Octave, false);
+    sheet.setColumnVisible(note, true);
+    sheet.setCell(note, 0, 60.0);
+    sheet.setCell(shift, 0, 7.0);
+    sheet.setCell(oct, 0, 1.0);
+
+    const int gate = sheet.findColumnByType(ColumnType::Gate, false);
+    sheet.setCellFormula(gate, 0, "=Pitch[STEP]+Shift[STEP]+Octave[STEP]*12");
+
+    juce::StringArray errors;
+    auto compiled = sheet.compile(errors);
+    CHECK(errors.isEmpty());
+
+    formula::Context ctx;
+    ctx.rng = nullptr;
+    // Gate is to the right of Note/Shift/Octave, so left-to-right refs work.
+    CHECK(compiled->evaluateCell(gate, 0, ctx) == 60 + 7 + 12);
+
+    // A forward reference (Note is leftmost; it may not read Octave) falls
+    // back to the target column's default value instead of its cell content.
+    sheet.setCellFormula(note, 1, "=Octave[STEP]*2");
+    {
+        juce::StringArray errs2;
+        auto c2 = sheet.compile(errs2);
+        CHECK(errs2.isEmpty());
+        ctx.set(formula::Var::Step, 1);
+        CHECK(c2->evaluateCell(note, 1, ctx) == 0.0); // Octave default, not 2*content
+    }
+    ctx.set(formula::Var::Step, 0);
+}
+
+void testHiddenColumnFallsBackToDefault()
+{
+    Sheet sheet;
+    // Time is hidden by default; use it as the hidden reference target.
+    const int time = sheet.findColumnByType(ColumnType::Time, false); // hidden by default
+    const int shift = sheet.findColumnByType(ColumnType::Shift, false);
+    sheet.setCell(time, 0, 61.0);
+    sheet.setColumnDefault(time, 99.0);
+    sheet.setCellFormula(shift, 0, "=" + columnLetters(time) + "1");
+
+    juce::StringArray errors;
+    auto compiled = sheet.compile(errors);
+    CHECK(errors.isEmpty());
+
+    formula::Context ctx;
+    ctx.rng = nullptr;
+    ctx.set(formula::Var::Step, 0);
+    // Note is hidden: its computed cell value (61) is not visible through a
+    // cross-column reference; the reference falls back to the column default.
+    CHECK(compiled->evaluateCell(shift, 0, ctx) == 99.0);
+
+    // Direct evaluation of the hidden cell still sees the actual content.
+    CHECK(compiled->evaluateCell(time, 0, ctx) == 61.0);
+}
+
+void testNoteNamesInNoteColumn()
+{
+    Sheet sheet;
+    const int note = sheet.findColumnByType(ColumnType::Note, false);
+    sheet.setColumnVisible(note, true);
+    sheet.setCellFormula(note, 0, "C3");
+    sheet.setCellFormula(note, 1, "=F#4");
+
+    juce::StringArray errors;
+    auto compiled = sheet.compile(errors);
+    CHECK(errors.isEmpty());
+
+    formula::Context ctx;
+    ctx.rng = nullptr;
+    ctx.set(formula::Var::Step, 0);
+    CHECK(compiled->evaluateCell(note, 0, ctx) == 48.0);
+    CHECK(compiled->evaluateCell(note, 1, ctx) == 66.0);
+}
+
 } // namespace
 
 void runSheetTests()
@@ -307,4 +388,7 @@ void runSheetTests()
     testStepActive();
     testDefaultSheet();
     testCircularCellRefs();
+    testCrossColumnRefsAndLeftToRight();
+    testHiddenColumnFallsBackToDefault();
+    testNoteNamesInNoteColumn();
 }

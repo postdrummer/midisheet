@@ -9,41 +9,99 @@
 #include <vector>
 
 /**
- * Spreadsheet grid: one row per step, one column per sheet column.
+ * Classic spreadsheet grid: one row per step, one column per sheet column.
  *
- * Column headers show the data type (top line) and column name (bottom line).
- * Cells show the evaluated value for a preview chord (C E G, held at velocity
- * 100, in Up order); the formula behind the selected cell is shown in the
- * editor's formula bar.
+ * Layout (like Excel / LibreOffice Calc):
+ *   - corner square (select all) over the row numbers
+ *   - column headers: data type (top line), column name (bottom line);
+ *     right-click for type/rename/hide/add/remove; click to select column
+ *   - row numbers down the left; click to select the row
+ *   - cells show the evaluated value for a preview chord (C E G, velocity 100,
+ *     Up order); the formula behind the active cell is in the formula bar
+ *   - the playing row is highlighted (tracker-style playhead)
  *
  * Keys (vim + spreadsheet):
  *   h j k l / arrows   move            gg / G        first / last step
  *   Ctrl-d / Ctrl-u    half page       Tab / S-Tab   next / previous column
- *   i  a  Enter  F2    edit formula    = 0-9 - .     start typing a new formula
- *   x  Delete  Bksp    clear cell      Space         toggle step on/off
- *   y / p              copy / paste    u / Ctrl-r    undo / redo (Cmd-Z works too)
- * Mouse: click to select, double-click to edit, click the "on" column to toggle.
+ *   Shift + move/click extends the selection (like a range in a sheet)
+ *   i  a  Enter  F2    edit formula    = 0-9 - .     type a new formula
+ *   x  Delete  Bksp    clear           Space         toggle step on/off
+ *   y / p, Cmd-C / V   copy / paste    u / Cmd-Z     undo / redo
  */
-class TrackerGrid : public juce::Component, private juce::Timer {
+class TrackerGrid : public juce::Component, private juce::Timer, public juce::SettableTooltipClient {
 public:
     explicit TrackerGrid(MidisheetAudioProcessor&);
 
     int getRow() const { return row; }
     int getCol() const { return col; }
-    juce::String cellName() const;               // e.g. "C3"
-    juce::String cellFormula() const;            // formula text of the selected cell
-    juce::String cellError() const;              // compile error of the selected cell, if any
+    juce::String cellName() const;                // e.g. "C3" (or "A1:C5" for a range)
+    juce::String cellFormula() const;             // formula text of the active cell
+    juce::String cellError() const;               // compile error of the active cell
     void setCellFormula(const juce::String& text); // commits (with undo)
+
+    void jumpTo(const juce::String& ref);          // Name Box: "B4" -> select
 
     std::function<void()> onSelectionChanged;
     std::function<void(const juce::String& initialText)> onEditRequested;
+
+    std::function<void(const juce::String&)> onHoverStatus;
+    juce::String hoverStatusText() const { return currentHoverStatus; }
+    juce::String activeCellValueText() const;
 
     void paint(juce::Graphics&) override;
     void resized() override;
     bool keyPressed(const juce::KeyPress&) override;
     void mouseDown(const juce::MouseEvent&) override;
+    void mouseDrag(const juce::MouseEvent&) override;
+    void mouseUp(const juce::MouseEvent&) override;
     void mouseDoubleClick(const juce::MouseEvent&) override;
     void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
+    void mouseMove(const juce::MouseEvent&) override;
+    void mouseExit(const juce::MouseEvent&) override;
+
+    // Public editing bailiwicks.
+    void undo();
+    void redo();
+    void copySelection();
+    void pasteIntoSelection();
+    void clearSelection();
+    void copyRowText(int r);
+    void pasteRowText(int r);
+
+    // Paste Special override from the Home/Formulas tabs: 0 = all,
+    // 1 = formulas only, 2 = numeric values only.
+    void setPasteMode(int m) { pasteMode_ = m; }
+
+    // Perform a sheet mutation through the undo path. Public so the
+    // editor's Columns ribbon can reuse it.
+    void performEdit(const std::function<void()>& change) { edit(change); }
+    void selectCell(int newRow, int newCol, bool extend = false) { select(newRow, newCol, extend); }
+
+    // --- View flags / zoom / autofit ---------------------------------------
+    bool showGridlines = true;
+    bool showRowNumbers = true;
+    bool showColumnHeaders = true;
+    bool freezeTopRow = false;
+    juce::Colour playheadColour { 0xffe0b050 };
+    float zoom = 1.0f;
+    std::vector<int> customColWidths; // per-column pixel overrides (from autofit)
+
+    void setShowGridlines(bool v) { showGridlines = v; repaint(); }
+    void setShowRowNumbers(bool v) { showRowNumbers = v; repaint(); }
+    void setShowColumnHeaders(bool v) { showColumnHeaders = v; repaint(); }
+    void setFreezeTopRow(bool v) { freezeTopRow = v; if (v) scrollRow = 0; repaint(); }
+    void setPlayheadColour(juce::Colour c) { playheadColour = c; repaint(); }
+    void setZoom(float z) { zoom = juce::jlimit(0.5f, 3.0f, z); repaint(); }
+    float getZoom() const { return zoom; }
+    void autoFitColumnWidths();
+
+    int headerH() const { return showColumnHeaders ? 30 : 0; }
+    int stripW() const { return showRowNumbers ? 34 : 0; }
+    int rowH() const { return std::max(8, static_cast<int>(20.0f * zoom)); }
+    int colX(int c, int width, int numCols) const;
+    int colW(int c, int width, int numCols) const;
+
+    int lastColumnDragFrom() const { return colDragFrom; }
 
 private:
     struct Preview {
@@ -55,23 +113,37 @@ private:
 
     void timerCallback() override;
     void refresh();
-    void select(int newRow, int newCol);
+    void select(int newRow, int newCol, bool extend = false);
     void ensureVisible();
     int numActiveSteps() const;
     int visibleRows() const;
-    bool cellAt(juce::Point<int>, int& r, int& c) const;
+    bool cellAt(juce::Point<float>, int& r, int& c) const;
+    void headerAt(juce::Point<float>, int& c, bool& isOnColumn) const;
+
+    std::pair<int, int> selRows() const; // normalized selection rectangle
+    std::pair<int, int> selCols() const;
+    bool isActiveCell() const;           // selection is a single cell
 
     std::string* formulaRef(int r, int c);
     void edit(const std::function<void()>& change); // snapshot for undo, apply, recompile
     void toggleStep(int r);
-    void undo();
-    void redo();
 
     MidisheetAudioProcessor& proc;
-    int row = 0, col = 0, scrollRow = 0;
+    int row = 0, col = 0, scrollRow = 0; // active cell
+    int anchorRow = 0, anchorCol = 0;
+    int selRowEnd = 0, selColEnd = 0; // other corner of the selection
     int seenVersion = -1, seenStep = -2;
     bool pendingG = false;
-    juce::String clipboard;
+    juce::String clipboard; // TSV: formula-or-value per cell
+
+    // Column drag-to-reorder state.
+    bool colDragActive = false;
+    int colDragFrom = -1; // source data column
+    int colDragOver = -1; // drop target data column
+    juce::Point<float> dragStart;
+
+    juce::String currentHoverStatus; // updated by mouseMove/mouseExit
+    int pasteMode_ = 0;
 
     // Preview per step per column (only visible columns are stored).
     std::vector<std::vector<Preview>> preview; // [row][col]

@@ -35,12 +35,16 @@ struct StepResult {
     int velocity = 100;
     double gate = 0.5;   // fraction of the note length
     double length = 1.0; // in steps
+    // The Octave column decides this row's octave spread: 0 = none.
+    // One note-on is emitted per offset (multiple octaves).
+    int numOctaveOffsets = 1;
+    int octaveOffsets[8] = {0}; // semitone offsets per octave copy
 };
 
 // Applies a step's columns to the note the arp picked. Shared by the engine
 // and the editor's preview so both always agree. Real-time safe.
 StepResult evaluateStep(const CompiledSheet& sheet, int patternStep, const StepInput& in, int prevNote,
-                        double defaultGate, uint32_t* rng);
+                        double defaultGate, uint32_t* rng, double defaultLength = 1.0);
 
 enum class Mode { Up, Down, UpDown, DownUp, Random, Order, Chord };
 
@@ -49,9 +53,9 @@ struct Settings {
     Mode mode = Mode::Up;
     double rateBeats = 0.25; // step length in quarter notes (0.25 = 1/16)
     int octaves = 1;
-    int numSteps = 16;
-    double gate = 0.5;  // default gate as a fraction of the step
-    double swing = 0.0; // 0..1: delays odd steps by up to half a step
+    double gate = 0.5;    // default gate as a fraction of the step
+    double swing = 0.0;   // 0..1: delays odd steps by up to half a step
+    double length = 1.0;  // default note length in steps when no Length column overrides
 };
 
 struct Transport {
@@ -66,6 +70,9 @@ struct MidiOut {
     int channel = 1;
     int pitch = 60;
     int velocity = 0;
+    bool isCC = false; // else note on/off
+    int ccNumber = 0;
+    int ccValue = 0;
 };
 
 class ArpEngine {
@@ -98,11 +105,16 @@ private:
     static constexpr int kMaxPending = 256;
 
     void buildSequence();
-    void fireStep(long stepIndex, double stepPpq, int sampleOffset, const CompiledSheet&, std::vector<MidiOut>&);
+    void fireRow(int row, double stepPpq, int sampleOffset, const CompiledSheet&, std::vector<MidiOut>&);
     void playNote(const SeqNote&, int patternStep, double stepPpq, int sampleOffset, const CompiledSheet&, std::vector<MidiOut>&);
     void emitDueOffs(double ppqStart, double beatsPerSample, int numSamples, std::vector<MidiOut>&);
     void flushAllOffs(int sampleOffset, std::vector<MidiOut>&);
     uint32_t nextRandom();
+
+    // Step-slot position of a row in units of rateBeats. Custom Time value
+    // when the Time column is visible and the cell is explicitly set;
+    // otherwise the row's default position.
+    double rowSlot(int row, const CompiledSheet& sheet, formula::Context& ctx) const;
 
     double sampleRate = 44100.0;
 

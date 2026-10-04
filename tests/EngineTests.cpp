@@ -36,6 +36,8 @@ std::vector<Event> run(ArpEngine& e, const CompiledSheet& sheet, long totalSampl
         e.process({pos * beatsPerSample, kBpm, playing}, sheet, n, out);
         for (auto& m : out) {
             CHECK(m.sampleOffset >= 0 && m.sampleOffset < n); // never outside the block
+            if (m.isCC)
+                continue; // CC events are reported by other tests; skip note decoding
             events.push_back({pos + m.sampleOffset, m.noteOn, m.pitch, m.velocity});
         }
     }
@@ -227,13 +229,169 @@ void testSwing()
 void testInactiveStepsAndNumSteps()
 {
     auto e = held({60});
-    e.settings.numSteps = 2;
     Sheet sheet;
+    sheet.setNumRows(2);
     sheet.setStepActive(1, false);
     juce::StringArray errors;
     auto compiled = sheet.compile(errors);
     auto on = ons(run(e, *compiled, 6000 * 4));
     CHECK(on.size() == 2 && on[0].sample == 0 && on[1].sample == 12000);
+}
+
+void testCustomTimeColumn()
+{
+    // Time column value replaces the row's default slot position.
+    auto e = held({60});
+    Sheet sheet;
+    sheet.setNumRows(2);
+    const int tc = sheet.findColumnByType(ColumnType::Time, false);
+    sheet.setColumnVisible(tc, true);
+    sheet.setCell(tc, 0, 0.5); // row 0 -> slot 0.5 instead of 0
+    juce::StringArray errors;
+    auto compiled = sheet.compile(errors);
+    CHECK(errors.isEmpty());
+
+    auto on = ons(run(e, *compiled, 12000 * 2));
+    // 16th = 6000 samples, two-step loop = 12000 samples.
+    CHECK(on.size() >= 4);
+    CHECK(on[0].sample == 3000); // row 0, slot 0.5
+    CHECK(on[1].sample == 6000); // row 1, default slot 1
+    CHECK(on[2].sample == 15000);
+    CHECK(on[3].sample == 18000);
+}
+
+void testTimeRearrangesRows()
+{
+    // Two rows swapped: row 0 -> slot 1, row 1 -> slot 0.
+    auto e = held({60});
+    Sheet sheet;
+    sheet.setNumRows(2);
+    const int tc = sheet.findColumnByType(ColumnType::Time, false);
+    sheet.setColumnVisible(tc, true);
+    sheet.setCell(tc, 0, 1.0);
+    sheet.setCell(tc, 1, 0.0);
+    juce::StringArray errors;
+    auto compiled = sheet.compile(errors);
+    CHECK(errors.isEmpty());
+
+    auto on = ons(run(e, *compiled, 12000 * 2));
+    CHECK(on.size() >= 4);
+    CHECK(on[0].sample == 0);    // row 1 at slot 0
+    CHECK(on[1].sample == 6000); // row 0 at slot 1
+}
+
+void testOctaveColumnExpandsPattern()
+{
+    // Octave = 2 emits the note at +0 and +12 within the same step.
+    auto e = held({60});
+    Sheet sheet;
+    const int oc = sheet.findColumnByType(ColumnType::Octave, false);
+    sheet.setColumnVisible(oc, true);
+    sheet.setCell(oc, 0, 2.0);
+    juce::StringArray errors;
+    auto compiled = sheet.compile(errors);
+    CHECK(errors.isEmpty());
+
+    auto ev = ons(run(e, *compiled, 6000 * 2));
+    CHECK(ev.size() >= 2);
+    CHECK(ev[0].pitch == 60 && ev[1].pitch == 72);
+
+    // A literal "0-3" parses as -3 -> treated as range 0..3 = 4 octaves.
+    auto e2 = held({60});
+    Sheet sheet2;
+    sheet2.setColumnVisible(oc, true);
+    sheet2.setCell(oc, 0, -3.0);
+    auto c2 = sheet2.compile(errors);
+    auto ev2 = ons(run(e2, *c2, 6000));
+    CHECK(ev2.size() == 4);
+    for (int i = 0; i < 4; ++i)
+        CHECK(ev2[i].pitch == 60 + i * 12);
+}
+
+void testChanceColumnSuppressesNotes()
+{
+    auto e = held({60});
+    Sheet sheet;
+    const int cc = sheet.findColumnByType(ColumnType::Chance, false);
+    sheet.setColumnVisible(cc, true);
+    sheet.setColumnDefault(cc, 0.0); // never
+    juce::StringArray errors;
+    auto compiled = sheet.compile(errors);
+    CHECK(errors.isEmpty());
+    auto ev = ons(run(e, *compiled, 6000 * 2));
+    CHECK(ev.empty());
+
+    auto e2 = held({60});
+    Sheet sheet2;
+    const int cc2 = sheet2.findColumnByType(ColumnType::Chance, false);
+    sheet2.setColumnVisible(cc2, true);
+    sheet2.setCell(cc2, 0, 100.0); // always
+    auto c2 = sheet2.compile(errors);
+    auto ev2 = ons(run(e2, *c2, 6000 * 2));
+    CHECK(ev2.size() == 2);
+}
+
+void testCCColumnEmitsCCs()
+{
+    auto e = held({60});
+    Sheet sheet;
+    const int cc = sheet.addColumn(ColumnType::CC, "Mod");
+    sheet.setColumnCCNumber(cc, 74);
+    sheet.setCell(cc, 0, 64.0);
+    juce::StringArray errors;
+    auto compiled = sheet.compile(errors);
+    CHECK(errors.isEmpty());
+
+    // Check raw output directly, as run() hides CC events:
+    std::vector<MidiOut> out;
+    out.reserve(64);
+    e.process({0.0, 120.0, true}, *compiled, 512, out);
+    bool cc74 = false;
+    for (auto& m : out)
+        if (m.isCC && m.ccNumber == 74 && m.ccValue == 64)
+            cc74 = true;
+    CHECK(cc74);
+}
+
+void testTempoChangeChangesStepDuration()
+{
+    // Fire with tempo=120, then immediately with tempo=60: from that point on,
+    // step intervals should be half as long.
+    auto e = held({60});
+    auto sheet = makeSheet();
+    std::vector<MidiOut> out;
+    out.reserve(256);
+
+    // Prime with 120 bpm for one full 16th step.
+    e.process({0.0, 120.0, true}, sheet, 6000, out);
+    out.clear();
+
+    // Next step interval at 60 bpm is half a second (= 1/2 beat?? no: 120->60 halves frequency,
+    // each 16th is now 12000 samples).
+    e.process({0.125, 60.0, true}, sheet, 12000, out);
+    int onAt = -1;
+    for (auto& m : out)
+        if (m.noteOn)
+            onAt = m.sampleOffset;
+    // Step 1 at 60bpm fires at 0.25 beats after 0.125 -> offset = (0.25-0.125)/(60/60/48000) = 6000
+    CHECK(onAt == 6000);
+}
+
+void testTimeColumnCanDescribeSwing()
+{
+    // A Time formula that yields 0.5 step-offset on odd rows gives the same
+    // pattern as engine swing=0.5.
+    auto e = held({60});
+    Sheet sheet;
+    const int tc = sheet.findColumnByType(ColumnType::Time, false);
+    sheet.setColumnVisible(tc, true);
+    sheet.setColumnDefaultFormula(tc, "=IF(MOD(STEP,2)=1,STEP+0.25,STEP)"); // odd: + half the engine's swing
+    juce::StringArray errors;
+    auto compiled = sheet.compile(errors);
+    CHECK(errors.isEmpty());
+    auto on = ons(run(e, *compiled, 6000 * 4));
+    CHECK(on.size() == 4);
+    CHECK(on[0].sample == 0 && on[1].sample == 7500 && on[2].sample == 12000 && on[3].sample == 19500);
 }
 
 void testTransportJumpFlushesNotes()
@@ -285,6 +443,13 @@ void runEngineTests()
     testModes();
     testSwing();
     testInactiveStepsAndNumSteps();
+    testCustomTimeColumn();
+    testTimeRearrangesRows();
+    testOctaveColumnExpandsPattern();
+    testChanceColumnSuppressesNotes();
+    testCCColumnEmitsCCs();
+    testTempoChangeChangesStepDuration();
+    testTimeColumnCanDescribeSwing();
     testTransportJumpFlushesNotes();
     testDisabledFlushesAndStaysQuiet();
     testFreeRunsWhenStopped();

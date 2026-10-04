@@ -3,8 +3,47 @@
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
+#include <algorithm>
 
 namespace arp::formula {
+
+double parseNoteName(std::string_view s)
+{
+    int i = 0;
+    while (i < static_cast<int>(s.size()) && (s[i] == ' ' || s[i] == '\t'))
+        ++i;
+    if (i >= static_cast<int>(s.size()))
+        return -1;
+
+    const char letter = static_cast<char>(std::toupper(static_cast<unsigned char>(s[i++])));
+    int semi = -1;
+    switch (letter) {
+        case 'C': semi = 0; break;
+        case 'D': semi = 2; break;
+        case 'E': semi = 4; break;
+        case 'F': semi = 5; break;
+        case 'G': semi = 7; break;
+        case 'A': semi = 9; break;
+        case 'B': semi = 11; break;
+        default: return -1;
+    }
+    if (i < static_cast<int>(s.size()) && s[i] == '#') { ++semi; ++i; }
+    else if (i < static_cast<int>(s.size()) && s[i] == 'b') { --semi; ++i; }
+
+    if (i >= static_cast<int>(s.size()) || !std::isdigit(static_cast<unsigned char>(s[i])))
+        return -1;
+    int octave = 0;
+    while (i < static_cast<int>(s.size()) && std::isdigit(static_cast<unsigned char>(s[i])))
+        octave = octave * 10 + (s[i++] - '0');
+
+    while (i < static_cast<int>(s.size()) && (s[i] == ' ' || s[i] == '\t'))
+        ++i;
+    if (i != static_cast<int>(s.size()))
+        return -1;
+
+    const int midi = (octave + 1) * 12 + semi; // C4 = 60
+    return (midi >= 0 && midi <= 127) ? midi : -1;
+}
 
 namespace {
 
@@ -33,7 +72,9 @@ double nextRandom(uint32_t* rng)
 // Recursive-descent parser emitting nodes in post-order.
 class Parser {
 public:
-    Parser(std::string_view src, Program& prog, int numCols) : s(src), p(prog), cols(numCols) {}
+    Parser(std::string_view src, Program& prog, int numCols,
+           const std::vector<std::string>* names)
+        : s(src), p(prog), cols(numCols), colNames(names) {}
 
     bool run(std::string& error)
     {
@@ -187,27 +228,87 @@ private:
             return inner;
         }
 
-        if (std::isalpha(static_cast<unsigned char>(c)) || c == '_') {
+        if (std::isalpha(static_cast<unsigned char>(c)) || c == '_' || c == '$') {
             size_t start = pos;
-            while (pos < s.size() && (std::isalnum(static_cast<unsigned char>(s[pos])) || s[pos] == '_'))
+            while (pos < s.size() &&
+                   (std::isalnum(static_cast<unsigned char>(s[pos])) || s[pos] == '_' || s[pos] == '$'))
                 ++pos;
-            return identifier(upper(s.substr(start, pos - start)), depth);
+            std::string tok(s.substr(start, pos - start));
+            tok.erase(std::remove(tok.begin(), tok.end(), '$'), tok.end()); // $A$1 == A1
+            return identifier(upper(tok), depth);
         }
 
         return error("Unexpected '" + std::string(1, c) + "'");
     }
 
+    static bool eqName(std::string_view a, std::string_view b)
+    {
+        if (a.size() != b.size())
+            return false;
+        for (size_t i = 0; i < a.size(); ++i)
+            if (std::toupper(static_cast<unsigned char>(a[i])) !=
+                std::toupper(static_cast<unsigned char>(b[i])))
+                return false;
+        return true;
+    }
+
     int identifier(const std::string& name, int depth)
     {
         skipSpace();
+
+        // Name-based reference: Note[ROW], Shift[STEP], Octave[3], ...
+        if (pos < s.size() && s[pos] == '[') {
+            ++pos;
+            int rowNode = comparison(depth + 1);
+            if (!accept("]"))
+                return error("Missing ']' in " + name + "[...]");
+            if (colNames == nullptr)
+                return error("Column names unavailable for " + name + "[...]");
+            for (size_t i = 0; i < colNames->size(); ++i) {
+                if (eqName((*colNames)[i], name)) {
+                    Program::Node n;
+                    n.op = Op::CellAt;
+                    n.index = static_cast<int>(i); // resolved column
+                    n.firstArg = static_cast<int>(p.args.size());
+                    n.numArgs = 1;
+                    p.args.push_back(rowNode);
+                    return emit(n);
+                }
+            }
+            return error("Unknown column: " + name);
+        }
+
         if (pos < s.size() && s[pos] == '(') {
             ++pos;
+            // NOTE("C3"): note-name literal parsed at compile time.
+            if (name == "NOTE") {
+                skipSpace();
+                if (pos < s.size() && s[pos] == '"') {
+                    ++pos;
+                    const size_t begin = pos;
+                    while (pos < s.size() && s[pos] != '"')
+                        ++pos;
+                    if (pos >= s.size())
+                        return error("Unterminated quote in NOTE()");
+                    const std::string note = s.substr(begin, pos - begin);
+                    ++pos;
+                    if (!accept(")"))
+                        return error("Missing ')' after NOTE(\"" + note + "\")");
+                    const double midi = parseNoteName(note);
+                    if (midi < 0.0)
+                        return error("Bad note name: " + note);
+                    Program::Node n;
+                    n.value = midi;
+                    return emit(n);
+                }
+            }
             return function(name, depth);
         }
 
         static const struct { const char* name; Var var; } kVars[] = {
-            {"STEP", Var::Step}, {"NOTE", Var::Note}, {"VELOCITY", Var::Velocity},
-            {"LENGTH", Var::Length}, {"CHANNEL", Var::Channel}, {"PREV", Var::Prev},
+            {"STEP", Var::Step}, {"ROW", Var::Step}, {"NOTE", Var::Note},
+            {"VELOCITY", Var::Velocity}, {"LENGTH", Var::Length},
+            {"CHANNEL", Var::Channel}, {"PREV", Var::Prev},
         };
         for (auto& v : kVars) {
             if (name == v.name) {
@@ -222,8 +323,11 @@ private:
             n.value = name == "TRUE" ? 1.0 : 0.0;
             return emit(n);
         }
-        if (name == "RANDOM")
+        if (name == "RANDOM" || name == "RAND")
             return emitOp(Op::Random, {});
+
+        if (name.empty())
+            return error("Unexpected '$'");
 
         // Cell reference: column letters (A..Z, AA..CL) then a row 1..64.
         size_t letterEnd = 0;
@@ -271,10 +375,19 @@ private:
             {"ROUND", Op::Round, 1, 2}, {"FLOOR", Op::Floor, 1, 1},
             {"CEIL", Op::Ceil, 1, 1},
         };
-        if (name == "RANDOM") {
+        if (name == "RANDOM" || name == "RAND") {
             if (n == 0) return emitOp(Op::Random, {});
             if (n == 2) return emitOp(Op::RandRange, {argv[0], argv[1]});
             return error("RANDOM takes 0 or 2 arguments");
+        }
+        // Zero-argument forms of the STEP/NOTE/PREV variables.
+        if (name == "NOTE" && n == 0) {
+            Program::Node node; node.op = Op::Var; node.index = static_cast<int>(Var::Note);
+            return emit(node);
+        }
+        if (name == "PREV" && n == 0) {
+            Program::Node node; node.op = Op::Var; node.index = static_cast<int>(Var::Prev);
+            return emit(node);
         }
         for (auto& f : kFns) {
             if (name != f.name)
@@ -294,15 +407,17 @@ private:
     std::string s; // owned copy: null-terminated for strtod
     Program& p;
     int cols; // sheet column count for cell reference resolution
+    const std::vector<std::string>* colNames = nullptr; // for Name[row] refs
     size_t pos = 0;
     std::string err;
 };
 
-Program Program::compile(std::string_view source, std::string& error, int numCols)
+Program Program::compile(std::string_view source, std::string& error, int numCols,
+                         const std::vector<std::string>* columnNames)
 {
     error.clear();
     Program prog;
-    Parser(source, prog, numCols).run(error);
+    Parser(source, prog, numCols, columnNames).run(error);
     return prog;
 }
 
@@ -326,6 +441,16 @@ double Program::evalNode(int i, const Context& ctx) const
         if (ctx.cellRef != nullptr)
             return ctx.cellRef(ctx.sheet, n.index, ctx); // computed value of the cell
         return ctx.cells ? ctx.cells[n.index] : 0.0;
+    case Op::CellAt: {
+        // n.index = column (resolved at compile time), arg(0) = 0-based row.
+        const int row = static_cast<int>(std::lround(arg(0)));
+        if (row < 0 || row >= kCellRows)
+            return 0.0;
+        const int idx = n.index * kCellRows + row;
+        if (ctx.cellRef != nullptr)
+            return ctx.cellRef(ctx.sheet, idx, ctx);
+        return ctx.cells ? ctx.cells[idx] : 0.0;
+    }
     case Op::Random: return nextRandom(ctx.rng);
     case Op::RandRange: {
         double lo = arg(0), hi = arg(1);

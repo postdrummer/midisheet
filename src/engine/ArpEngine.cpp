@@ -6,7 +6,7 @@
 namespace arp {
 
 StepResult evaluateStep(const CompiledSheet& sheet, int patternStep, const StepInput& in, int prevNote,
-                        double defaultGate, uint32_t* rng)
+                        double defaultGate, uint32_t* rng, double defaultLength)
 {
     formula::Context ctx;
     ctx.cells = sheet.cells.data();
@@ -16,13 +16,13 @@ StepResult evaluateStep(const CompiledSheet& sheet, int patternStep, const StepI
     ctx.set(formula::Var::Velocity, in.velocity);
     ctx.set(formula::Var::Channel, in.channel);
     ctx.set(formula::Var::Prev, prevNote);
-    ctx.set(formula::Var::Length, 1.0);
+    ctx.set(formula::Var::Length, defaultLength);
 
     StepResult r;
     r.pitch = in.pitch;
     r.velocity = in.velocity;
     r.gate = defaultGate;
-    r.length = 1.0;
+    r.length = defaultLength;
     r.playable = true;
 
     // Evaluate visible columns left-to-right; each column transforms the signal.
@@ -42,11 +42,21 @@ StepResult evaluateStep(const CompiledSheet& sheet, int patternStep, const StepI
             case ColumnType::Shift:
                 r.pitch += static_cast<int>(std::lround(value));
                 break;
-            case ColumnType::Octave:
-                r.pitch += static_cast<int>(std::lround(value)) * 12;
+            case ColumnType::Octave: {
+                // "2" = play 2 octaves; "0-3" parses as -3 = "0..3" = 4 octaves.
+                int n = static_cast<int>(std::lround(value));
+                if (n < 0)
+                    n = -n + 1;
+                n = std::clamp(n, 1, 8);
+                r.numOctaveOffsets = n;
+                for (int i = 0; i < n; ++i)
+                    r.octaveOffsets[i] = i * 12;
                 break;
+            }
             case ColumnType::Velocity:
-                r.velocity = static_cast<int>(std::lround(value));
+                // <= 0 = pass the incoming velocity through (default).
+                if (value > 0.0)
+                    r.velocity = static_cast<int>(std::lround(value));
                 break;
             case ColumnType::Gate:
                 r.gate = value / 100.0; // gate columns are in percent
@@ -56,7 +66,7 @@ StepResult evaluateStep(const CompiledSheet& sheet, int patternStep, const StepI
                 ctx.set(formula::Var::Length, r.length);
                 break;
             default:
-                break; // Time, Chance, CC, Text, Formula: no direct effect yet
+                break; // Time drives scheduling in rowSlot(); Chance and CC are handled in fireRow()
         }
     }
 
@@ -156,36 +166,41 @@ void ArpEngine::playNote(const SeqNote& src, int patternStep, double stepPpq, in
                           const CompiledSheet& sheet, std::vector<MidiOut>& out)
 {
     const StepResult r = evaluateStep(sheet, patternStep, {src.channel, src.pitch, src.velocity}, prevNote,
-                                      settings.gate, &rngState);
+                                      settings.gate, &rngState, settings.length);
     if (!r.playable)
         return;
-    const int pitch = r.pitch, velocity = r.velocity;
+    const int velocity = r.velocity;
     const double gate = r.gate, length = r.length;
 
-    // Retrigger: close a still-sounding copy of this pitch first.
-    for (int i = 0; i < numPending;) {
-        auto& p = pending[static_cast<size_t>(i)];
-        if (p.pitch == pitch && p.channel == src.channel) {
-            out.push_back({sampleOffset, false, p.channel, p.pitch, 0});
-            p = pending[static_cast<size_t>(--numPending)];
-        } else {
-            ++i;
-        }
-    }
-    if (numPending == kMaxPending)
-        return;
+    for (int o = 0; o < r.numOctaveOffsets; ++o) {
+        const int pitch = r.pitch + r.octaveOffsets[o];
+        if (pitch < 0 || pitch > 127)
+            continue;
 
-    out.push_back({sampleOffset, true, src.channel, pitch, velocity});
-    pending[static_cast<size_t>(numPending++)] = {stepPpq + length * gate * settings.rateBeats,
-                                                   src.channel, pitch};
-    prevNote = pitch;
+        // Retrigger: close a still-sounding copy of this pitch first.
+        for (int i = 0; i < numPending;) {
+            auto& p = pending[static_cast<size_t>(i)];
+            if (p.pitch == pitch && p.channel == src.channel) {
+                out.push_back({sampleOffset, false, p.channel, p.pitch, 0});
+                p = pending[static_cast<size_t>(--numPending)];
+            } else {
+                ++i;
+            }
+        }
+        if (numPending == kMaxPending)
+            return;
+
+        out.push_back({sampleOffset, true, src.channel, pitch, velocity});
+        pending[static_cast<size_t>(numPending++)] = {stepPpq + length * gate * settings.rateBeats,
+                                                      src.channel, pitch};
+        prevNote = pitch;
+    }
 }
 
-void ArpEngine::fireStep(long stepIndex, double stepPpq, int sampleOffset, const CompiledSheet& sheet,
+void ArpEngine::fireRow(int patternStep, double stepPpq, int sampleOffset, const CompiledSheet& sheet,
                           std::vector<MidiOut>& out)
 {
-    const int numSteps = std::clamp(settings.numSteps, 1, kMaxSteps);
-    lastStep = static_cast<int>(stepIndex % numSteps); // playhead moves even with no notes held
+    lastStep = patternStep; // playhead moves even with no notes held
     if (numHeld == 0)
         return;
     if (seqDirty || builtMode != settings.mode || builtOctaves != settings.octaves)
@@ -193,10 +208,41 @@ void ArpEngine::fireStep(long stepIndex, double stepPpq, int sampleOffset, const
     if (seqLen == 0)
         return;
 
-    const int patternStep = lastStep;
     if (!sheet.isStepActive(patternStep)) {
         ++sequencePos; // rests still advance the order, like a tracker row
         return;
+    }
+
+    // Row-level context for non-pitch columns evaluated at slot time.
+    formula::Context sctx;
+    sctx.cells = sheet.cells.data();
+    sctx.rng = &rngState;
+    sctx.set(formula::Var::Step, patternStep);
+
+    // Chance gate: a visible Chance column with value c rolls c% success. A
+    // missed roll is a rest — sequence advances but no note/CC fires.
+    if (const int chanceCol = sheet.findColumn(ColumnType::Chance); chanceCol >= 0) {
+        const double c = sheet.evaluateCell(chanceCol, patternStep, sctx);
+        const double u = static_cast<double>(nextRandom()) / 4294967296.0 * 100.0;
+        if (u >= c) {
+            ++sequencePos; // chance-miss counts as a rest in the order
+            return;        // nothing on this row: skip notes, skip CCs
+        }
+    }
+
+    // Visible CC columns emit a CC event on this row (modulation source).
+    for (int c = 0; c < sheet.numCols; ++c) {
+        const auto& meta = sheet.cols[static_cast<size_t>(c)];
+        if (meta.type != ColumnType::CC || !meta.visible)
+            continue;
+        const double v = sheet.evaluateCell(c, patternStep, sctx);
+        MidiOut e;
+        e.sampleOffset = sampleOffset;
+        e.isCC = true;
+        e.channel = 1;
+        e.ccNumber = meta.ccNumber;
+        e.ccValue = std::clamp(static_cast<int>(std::lround(v)), 0, 127);
+        out.push_back(e);
     }
 
     if (settings.mode == Mode::Chord) {
@@ -209,6 +255,22 @@ void ArpEngine::fireStep(long stepIndex, double stepPpq, int sampleOffset, const
                                                : static_cast<size_t>(sequencePos % static_cast<uint64_t>(seqLen));
     ++sequencePos;
     playNote(seq[idx], patternStep, stepPpq, sampleOffset, sheet, out);
+}
+
+double ArpEngine::rowSlot(int row, const CompiledSheet& sheet, formula::Context& ctx) const
+{
+    // Default timing: row r plays at step slot r.
+    const int timeCol = sheet.findColumn(ColumnType::Time); // first visible
+    if (timeCol < 0)
+        return static_cast<double>(row);
+    const size_t idx = static_cast<size_t>(timeCol * sheet.numRows + row);
+    // Time requires an explicit per-cell value/formula, or a column default
+    // formula: then that value (empty cells fall back to it) sets the row.
+    if (!sheet.cellPrograms[idx] && !sheet.hasValue[idx] &&
+        !sheet.columnDefaultPrograms[static_cast<size_t>(timeCol)])
+        return static_cast<double>(row);
+    const double t = sheet.evaluateCell(timeCol, row, ctx);
+    return std::isfinite(t) && t >= 0.0 ? t : static_cast<double>(row);
 }
 
 void ArpEngine::flushAllOffs(int sampleOffset, std::vector<MidiOut>& out)
@@ -266,22 +328,38 @@ void ArpEngine::process(const Transport& transport, const CompiledSheet& sheet, 
     wasPlaying = transport.playing;
 
     const double ppqEnd = ppqStart + numSamples * beatsPerSample;
+
+    // Host loop. Trigger times are derived in PPQ so everything is
+    // stable across block sizes and tempo; swing shifts by row slot
+    // parity. Rows may override their slot via the Time column.
+    const int numSteps = std::min(sheet.numSteps, kMaxSteps);
     const double rate = std::max(1.0 / 64.0, settings.rateBeats);
+    const double loopLen = static_cast<double>(numSteps) * rate;
     const double swingOffset = std::clamp(settings.swing, 0.0, 1.0) * rate * 0.5;
 
-    emitDueOffs(ppqStart, beatsPerSample, numSamples, out);
+    formula::Context ctx;
+    ctx.cells = sheet.cells.data();
+    ctx.rng = &rngState;
 
-    // Step s sounds at s*rate, plus the swing offset on odd steps.
-    for (long s = static_cast<long>(std::floor((ppqStart - swingOffset) / rate)) - 1;; ++s) {
-        const double gridPpq = s * rate;
-        if (gridPpq > ppqEnd)
-            break;
-        const double stepPpq = gridPpq + ((s & 1) ? swingOffset : 0.0);
-        // Decide block membership in whole samples so timing is identical for any buffer size.
-        const long offset = std::lround((stepPpq - ppqStart) / beatsPerSample);
-        if (s < 0 || offset < 0 || offset >= numSamples)
-            continue;
-        fireStep(s, stepPpq, static_cast<int>(offset), sheet, out);
+    for (int row = 0; row < numSteps; ++row) {
+        ctx.set(formula::Var::Step, row);
+        ctx.set(formula::Var::Note, 0); // base vars; playNote refines per note
+        const double slot = rowSlot(row, sheet, ctx);
+        const double onset = slot * rate;
+        const double sw = (static_cast<long>(std::floor(slot)) & 1) ? swingOffset : 0.0;
+
+        long k = static_cast<long>(std::floor((ppqStart - onset - sw) / loopLen));
+        for (;; ++k) {
+            const double trigger = k * loopLen + onset + sw;
+            if (trigger > ppqEnd)
+                break;
+            if (trigger < ppqStart)
+                continue;
+            const long offset = std::lround((trigger - ppqStart) / beatsPerSample);
+            if (offset < 0 || offset >= numSamples)
+                continue;
+            fireRow(row, trigger, static_cast<int>(offset), sheet, out);
+        }
     }
 
     emitDueOffs(ppqStart, beatsPerSample, numSamples, out); // very short gates

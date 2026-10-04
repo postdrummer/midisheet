@@ -27,7 +27,7 @@ enum class ColumnType : uint8_t {
     Note,     // MIDI note number (0..127) or note name; <0 = pass through
     Shift,    // semitone shift
     Octave,   // octave shift (value * 12 semitones)
-    Velocity, // 0..127
+    Velocity, // 0..127; <=0 = use incoming note velocity
     Gate,     // 0..100 percent of the step
     Length,   // note length in steps
     Percent,  // 0..100
@@ -42,7 +42,7 @@ inline const char* columnTypeName(ColumnType t)
 {
     switch (t) {
         case ColumnType::Number: return "Number";
-        case ColumnType::Note: return "Note";
+        case ColumnType::Note: return "Pitch";
         case ColumnType::Shift: return "Shift";
         case ColumnType::Octave: return "Octave";
         case ColumnType::Velocity: return "Velocity";

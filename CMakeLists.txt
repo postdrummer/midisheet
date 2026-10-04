@@ -48,6 +48,7 @@ target_sources(Midisheet
         src/PluginProcessor.cpp
         src/PluginEditor.cpp
         src/TrackerGrid.cpp
+        src/Ribbon.cpp
 )
 
 target_compile_definitions(Midisheet

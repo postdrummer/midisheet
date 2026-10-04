@@ -2,65 +2,45 @@
 
 namespace {
 
-const char* const kHint = "hjkl move  i/Enter edit  = or digit: new formula  x clear  space on/off  y/p copy/paste  u undo";
+const char* const kHint = "hjkl move  i/Enter edit  = or digit: new formula  x clear  space on/off  y/p copy/paste  u undo  shift+move select range  right-click header: type/rename/hide/add/remove";
 
 } // namespace
 
 MidisheetAudioProcessorEditor::MidisheetAudioProcessorEditor(MidisheetAudioProcessor& p)
-    : AudioProcessorEditor(&p), processorRef(p), grid(p)
+    : AudioProcessorEditor(&p), processorRef(p), grid(p), ribbon(p, grid, formulaBar)
 {
-    auto& apvts = p.getAPVTS();
-
-    enabledButton.setButtonText("Enabled");
-    modeCombo.addItemList(apvts.getParameter("mode")->getAllValueStrings(), 1);
-    rateCombo.addItemList(apvts.getParameter("rate")->getAllValueStrings(), 1);
-    for (auto* c : std::initializer_list<juce::Component*>{&enabledButton, &modeCombo, &rateCombo}) {
-        c->setWantsKeyboardFocus(false); // keep keys going to the grid
-        addAndMakeVisible(*c);
-    }
-
-    const std::pair<juce::Slider*, juce::Label*> sliders[] = {
-        {&numStepsSlider, &numStepsLabel}, {&gateSlider, &gateLabel},
-        {&octaveRangeSlider, &octaveRangeLabel}, {&swingSlider, &swingLabel}};
-    const char* const names[] = {"Steps", "Gate", "Octaves", "Swing"};
-    for (size_t i = 0; i < std::size(sliders); ++i) {
-        auto [slider, label] = sliders[i];
-        slider->setSliderStyle(juce::Slider::LinearBar);
-        slider->setWantsKeyboardFocus(false);
-        label->setText(names[i], juce::dontSendNotification);
-        label->setJustificationType(juce::Justification::centredRight);
-        addAndMakeVisible(*slider);
-        addAndMakeVisible(*label);
-    }
-
-    enabledAttachment = std::make_unique<ButtonAttachment>(apvts, "enabled", enabledButton);
-    modeAttachment = std::make_unique<ComboBoxAttachment>(apvts, "mode", modeCombo);
-    rateAttachment = std::make_unique<ComboBoxAttachment>(apvts, "rate", rateCombo);
-    numStepsAttachment = std::make_unique<SliderAttachment>(apvts, "numSteps", numStepsSlider);
-    gateAttachment = std::make_unique<SliderAttachment>(apvts, "gate", gateSlider);
-    octaveRangeAttachment = std::make_unique<SliderAttachment>(apvts, "octaveRange", octaveRangeSlider);
-    swingAttachment = std::make_unique<SliderAttachment>(apvts, "swing", swingSlider);
-    for (auto* s : {&gateSlider, &swingSlider}) {
-        s->textFromValueFunction = [](double v) { return juce::String(juce::roundToInt(v * 100)) + "%"; };
-        s->valueFromTextFunction = [](const juce::String& t) { return t.getDoubleValue() / 100.0; };
-        s->updateText();
-    }
+    (void)p.getAPVTS(); // APVTS params remain available to the ribbon and for host automation.
 
     // Formula bar
     const auto mono = juce::FontOptions(juce::Font::getDefaultMonospacedFontName(), 14.0f, juce::Font::plain);
-    cellLabel.setFont(juce::Font(mono));
-    cellLabel.setColour(juce::Label::textColourId, juce::Colour(0xffe0b050));
+    nameBox.setFont(juce::Font(mono));
+    nameBox.setColour(juce::TextEditor::textColourId, juce::Colour(0xffe0b050));
+    nameBox.setJustification(juce::Justification::centredRight);
+    nameBox.onReturnKey = [this] { grid.jumpTo(nameBox.getText()); grid.grabKeyboardFocus(); };
+    nameBox.onEscapeKey = [this] { showSelectedCell(); grid.grabKeyboardFocus(); };
+    nameBox.onFocusLost = [this] { showSelectedCell(); };
     formulaBar.setFont(juce::Font(mono));
     formulaBar.setTextToShowWhenEmpty("(empty: uses the default)", juce::Colour(0xff646c78));
     formulaBar.onReturnKey = [this] { commitFormula(); grid.grabKeyboardFocus(); };
     formulaBar.onEscapeKey = [this] { showSelectedCell(); grid.grabKeyboardFocus(); };
-    formulaBar.onFocusLost = [this] { commitFormula(); };
+    formulaBar.onFocusLost = [this] { commitFormula(); hideSuggestions(); };
+    formulaBar.onTextChange = [this] { updateSuggestions(); };
+    formulaBar.acVisibleHook = [this] { return acBox.isVisible(); };
+    formulaBar.acUp = [this] { navSuggestions(-1); };
+    formulaBar.acDown = [this] { navSuggestions(1); };
+    formulaBar.acAccept = [this] { acceptSuggestion(); };
+    formulaBar.acDismiss = [this] { hideSuggestions(); };
     statusLabel.setFont(juce::Font(juce::FontOptions(12.0f)));
-    addAndMakeVisible(cellLabel);
+    addAndMakeVisible(nameBox);
     addAndMakeVisible(formulaBar);
     addAndMakeVisible(statusLabel);
+    addChildComponent(acBox);
+    acBox.onPick = [this](juce::String item) { acceptSuggestion(item); };
+
+    addAndMakeVisible(ribbon);
 
     grid.onSelectionChanged = [this] { showSelectedCell(); };
+    grid.onHoverStatus = [this](const juce::String&) { updateStatus(); };
     grid.onEditRequested = [this](const juce::String& initial) {
         formulaBar.setText(initial, false);
         formulaBar.grabKeyboardFocus();
@@ -72,6 +52,8 @@ MidisheetAudioProcessorEditor::MidisheetAudioProcessorEditor(MidisheetAudioProce
     setResizeLimits(560, 420, 1400, 1600);
     setSize(720, 680);
     showSelectedCell();
+    fitHeightToRows();
+    startTimerHz(10);
 }
 
 void MidisheetAudioProcessorEditor::visibilityChanged()
@@ -90,14 +72,54 @@ MidisheetAudioProcessorEditor::~MidisheetAudioProcessorEditor() {}
 
 void MidisheetAudioProcessorEditor::showSelectedCell()
 {
-    cellLabel.setText(grid.cellName(), juce::dontSendNotification);
+    if (!nameBox.hasKeyboardFocus(true))
+        nameBox.setText(grid.cellName(), false);
     if (!formulaBar.hasKeyboardFocus(true))
         formulaBar.setText(grid.cellFormula(), false);
 
+    updateStatus();
+    ribbon.activeColumnChanged();
+}
+
+void MidisheetAudioProcessorEditor::updateStatus()
+{
     const auto err = grid.cellError();
-    statusLabel.setText(err.isEmpty() ? juce::String(kHint) : "Error: " + err, juce::dontSendNotification);
-    statusLabel.setColour(juce::Label::textColourId,
-                          err.isEmpty() ? juce::Colour(0xff646c78) : juce::Colour(0xffff7a59));
+    if (!err.isEmpty()) {
+        statusLabel.setText("Error: " + err, juce::dontSendNotification);
+        statusLabel.setColour(juce::Label::textColourId, juce::Colour(0xffff7a59));
+        return;
+    }
+
+    const auto hover = grid.hoverStatusText();
+    if (hover.isNotEmpty()) {
+        statusLabel.setText(hover, juce::dontSendNotification);
+        statusLabel.setColour(juce::Label::textColourId, juce::Colour(0xff646c78));
+        return;
+    }
+
+    const int dCol = grid.getCol() - 1;
+    auto& sheet = processorRef.getSheet();
+    if (dCol >= 0 && dCol < sheet.getNumColumns()) {
+        const auto& col = sheet.getColumn(dCol);
+        const auto formula = grid.cellFormula();
+        const auto value = grid.activeCellValueText();
+        const bool hasContent = (formula.trim().isNotEmpty() && formula != "on" && formula != "off") ||
+                                sheet.hasCellValue(dCol, grid.getRow());
+        if (hasContent) {
+            juce::String s = grid.cellName() + "  ·  " + juce::String(col.name) + "  ·  " +
+                             arp::columnTypeName(col.type);
+            if (formula.trim().isNotEmpty() && formula != "on" && formula != "off")
+                s += "  ·  =" + formula;
+            if (value.isNotEmpty())
+                s += "  ·  " + value;
+            statusLabel.setText(s, juce::dontSendNotification);
+            statusLabel.setColour(juce::Label::textColourId, juce::Colour(0xff646c78));
+            return;
+        }
+    }
+
+    statusLabel.setText(juce::String("Ready  —  ") + kHint, juce::dontSendNotification);
+    statusLabel.setColour(juce::Label::textColourId, juce::Colour(0xff646c78));
 }
 
 void MidisheetAudioProcessorEditor::commitFormula()
@@ -106,39 +128,139 @@ void MidisheetAudioProcessorEditor::commitFormula()
     showSelectedCell();
 }
 
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Formula autocomplete
+
+void MidisheetAudioProcessorEditor::updateSuggestions()
+{
+    if (!formulaBar.hasKeyboardFocus(true)) {
+        hideSuggestions();
+        return;
+    }
+
+    const int caret = formulaBar.getCaretPosition();
+    const juce::String head = formulaBar.getText().substring(0, caret);
+    int start = head.length();
+    while (start > 0 &&
+           (juce::CharacterFunctions::isLetterOrDigit(head[start - 1]) || head[start - 1] == '_' || head[start - 1] == '$'))
+        --start;
+    const juce::String token = head.substring(start);
+
+    acBox.items.clear();
+    if (token.isNotEmpty()) {
+        for (const auto& cand : candidatesForCompletion())
+            if (cand.startsWithIgnoreCase(token) && !cand.equalsIgnoreCase(token))
+                acBox.items.add(cand);
+    }
+
+    if (acBox.items.isEmpty()) {
+        hideSuggestions();
+        return;
+    }
+
+    acBox.updateContent();
+    acBox.selectRow(0);
+    const int h = juce::jmin(acBox.items.size() * 18 + 2, 160);
+    acBox.setBounds(formulaBar.getX(), formulaBar.getBottom(), juce::jmin(formulaBar.getWidth(), 360), h);
+    acBox.setVisible(true);
+}
+
+void MidisheetAudioProcessorEditor::hideSuggestions()
+{
+    acBox.setVisible(false);
+    acBox.items.clear();
+}
+
+void MidisheetAudioProcessorEditor::acceptSuggestion(juce::String item)
+{
+    if (item.isEmpty() && acBox.getSelectedRow() >= 0)
+        item = acBox.items[acBox.getSelectedRow()];
+    if (item.isEmpty()) {
+        hideSuggestions();
+        return;
+    }
+
+    const int caret = formulaBar.getCaretPosition();
+    const juce::String text = formulaBar.getText();
+    const juce::String head = text.substring(0, caret);
+    int start = head.length();
+    while (start > 0 &&
+           (juce::CharacterFunctions::isLetterOrDigit(head[start - 1]) || head[start - 1] == '_' || head[start - 1] == '$'))
+        --start;
+    const int replaceEnd = caret;
+    formulaBar.setText(text.substring(0, start) + item + text.substring(replaceEnd), true);
+    formulaBar.setCaretPosition(start + item.length());
+    hideSuggestions();
+    formulaBar.grabKeyboardFocus();
+}
+
+void MidisheetAudioProcessorEditor::navSuggestions(int dir)
+{
+    if (!acBox.isVisible() || acBox.items.isEmpty())
+        return;
+    int row = acBox.getSelectedRow() + dir;
+    row = juce::jlimit(0, acBox.items.size() - 1, row);
+    acBox.selectRow(row);
+}
+
+juce::StringArray MidisheetAudioProcessorEditor::candidatesForCompletion()
+{
+    static const char* const fns[] = {"IF",   "MOD", "SUM", "AVG", "AVERAGE", "MIN",
+                                      "MAX",  "ABS", "ROUND", "FLOOR", "CEIL", "RANDOM", "RAND",
+                                      "NOTE", "PREV"};
+    juce::StringArray out;
+    for (const char* f : fns)
+        out.add(juce::String(f) + "(");
+
+    for (const char* v : {"STEP", "ROW", "NOTE", "VELOCITY", "LENGTH", "CHANNEL", "PREV", "RANDOM", "RAND", "TRUE", "FALSE"})
+        out.add(v);
+
+    auto& sheet = processorRef.getSheet();
+    for (int c = 0; c < sheet.getNumColumns(); ++c) {
+        const auto& col = sheet.getColumn(c);
+        out.add(juce::String(col.name) + "[");       // name-based ref lets you type the row expr
+        out.add(juce::String(col.name));
+        for (int r = 0; r < sheet.getNumRows(); ++r) // every visible cell ref in that column
+            out.add(juce::String(arp::columnLetters(c)) + juce::String(r + 1));
+    }
+    out.removeDuplicates(true);
+    return out;
+}
+
 void MidisheetAudioProcessorEditor::paint(juce::Graphics& g) {
     g.fillAll(juce::Colour(0xff111317));
-    g.setColour(juce::Colours::white);
-    g.setFont(juce::FontOptions(18.0f, juce::Font::bold));
-    g.drawText("Midisheet", 12, 8, 120, 28, juce::Justification::centredLeft);
+}
+
+void MidisheetAudioProcessorEditor::timerCallback()
+{
+    const int v = processorRef.getSheetVersion();
+    if (v != seenVersion || grid.getZoom() != seenZoom) {
+        seenVersion = v;
+        seenZoom = grid.getZoom();
+        fitHeightToRows();
+    }
+}
+
+void MidisheetAudioProcessorEditor::fitHeightToRows()
+{
+    constexpr int kChrome = 10 + 10 + (24 + 36 + 6) + (26 + 4) + (20 + 4); // margins + ribbon + bar + status
+    const int rows = processorRef.getSheet().getNumRows();
+    const int want = kChrome + grid.headerH() + rows * grid.rowH();
+    const int h = juce::jlimit(420, 1600, want);
+    setSize(getWidth(), h);
 }
 
 void MidisheetAudioProcessorEditor::resized() {
     auto area = getLocalBounds().reduced(10);
 
-    auto row1 = area.removeFromTop(28);
-    row1.removeFromLeft(120); // title
-    enabledButton.setBounds(row1.removeFromLeft(90));
-    row1.removeFromLeft(8);
-    modeCombo.setBounds(row1.removeFromLeft(120));
-    row1.removeFromLeft(8);
-    rateCombo.setBounds(row1.removeFromLeft(80));
+    // Ribbon tabs + current tab's band.
+    const int tabH = 24, bandH = 36;
+    ribbon.setBounds(area.removeFromTop(tabH + bandH));
     area.removeFromTop(6);
 
-    auto row2 = area.removeFromTop(24);
-    const int each = row2.getWidth() / 4;
-    const std::pair<juce::Slider*, juce::Label*> sliders[] = {
-        {&numStepsSlider, &numStepsLabel}, {&gateSlider, &gateLabel},
-        {&octaveRangeSlider, &octaveRangeLabel}, {&swingSlider, &swingLabel}};
-    for (auto [slider, label] : sliders) {
-        auto cell = row2.removeFromLeft(each).reduced(2, 0);
-        label->setBounds(cell.removeFromLeft(60));
-        slider->setBounds(cell.reduced(4, 0));
-    }
-    area.removeFromTop(8);
-
     auto bar = area.removeFromTop(26);
-    cellLabel.setBounds(bar.removeFromLeft(70));
+    nameBox.setBounds(bar.removeFromLeft(70));
     formulaBar.setBounds(bar);
     area.removeFromTop(4);
 

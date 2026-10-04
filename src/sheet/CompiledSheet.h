@@ -32,6 +32,9 @@ struct CompiledSheet {
     int numCols = 0;
     int numRows = kMaxRows;
 
+    // How many rows the engine plays / the UI calls rows.
+    int numSteps = kMaxRows;
+
     // Cell references index as col * kCellRows + row; the stride must match.
     static_assert(kMaxRows == formula::kCellRows, "cell reference stride mismatch");
 
@@ -68,6 +71,7 @@ struct CompiledSheet {
         child.sheet = this;
         child.cellRef = &evalCellRef;
         child.depth = ctx.depth + 1;
+        child.srcCol = col; // refs from this cell may not jump forward
         child.set(formula::Var::Step, row); // a cell lives in row `row`, i.e. step `row`
 
         if (cellPrograms[idx])
@@ -81,10 +85,34 @@ struct CompiledSheet {
 
     // Callback installed into formula::Context so cell references hop back
     // through evaluateCell(). `index` is column-major: col * kCellRows + row.
+    //
+    // A referenced cell contributes its computed value only when its column
+    // is visible and not to the right of the source cell; otherwise we fall
+    // back to that column's default chain (default formula > default value).
+    // This is the documented behavior for empty cells (handled in
+    // evaluateCell itself), hidden columns, and forward references.
     static double evalCellRef(const void* self, int index, const formula::Context& ctx)
     {
         const auto& sheet = *static_cast<const CompiledSheet*>(self);
-        return sheet.evaluateCell(index / sheet.numRows, index % sheet.numRows, ctx);
+        const int col = index / sheet.numRows;
+        const int row = index % sheet.numRows;
+        if (col < 0 || col >= sheet.numCols)
+            return 0.0;
+
+        const auto& meta = sheet.cols[static_cast<size_t>(col)];
+        const bool forward = ctx.srcCol >= 0 && col > ctx.srcCol;
+        if (!forward && meta.visible)
+            return sheet.evaluateCell(col, row, ctx);
+
+        if (ctx.depth >= kMaxRefDepth)
+            return meta.defaultValue;
+        auto child = ctx;
+        child.depth = ctx.depth + 1;
+        child.srcCol = col;
+        child.set(formula::Var::Step, row);
+        if (sheet.columnDefaultPrograms[static_cast<size_t>(col)])
+            return sheet.columnDefaultPrograms[static_cast<size_t>(col)]->eval(child);
+        return meta.defaultValue;
     }
 
     // Find the first visible column of a given type (-1 if none).
