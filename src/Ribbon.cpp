@@ -114,7 +114,7 @@ void Ribbon::buildHome(RibbonTab& tab)
     tab.addItem(mkBtn("Del col", [this] {
         const int dCol = grid_.getCol() - 1;
         if (dCol < 0) return;
-        grid_.performEdit([this, dCol] { proc.getSheet().removeColumn(dCol); });
+        grid_.performEdit([this, dCol] { proc.getSheet().deleteColumn(dCol); });
     }), 80);
 
     tab.addItem(mkBtn("Clear", [this] { grid_.clearSelection(); }), 64);
@@ -238,10 +238,10 @@ void Ribbon::buildColumns(RibbonTab& tab)
             delete w;
         }), false);
     }), 92);
-    tab.addItem(mkBtn("Remove", [this] {
+    tab.addItem(mkBtn("Delete", [this] {
         const int dc = grid_.getCol() - 1;
         if (dc < 0) return;
-        grid_.performEdit([this, dc] { proc.getSheet().removeColumn(dc); });
+        grid_.performEdit([this, dc] { proc.getSheet().deleteColumn(dc); });
         grid_.selectCell(grid_.getRow(), juce::jmin(dc + 1, proc.getSheet().getNumColumns()));
     }), 84);
 }

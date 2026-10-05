@@ -4,6 +4,7 @@
 #include "PluginProcessor.h"
 #include "TrackerGrid.h"
 #include "Ribbon.h"
+#include "TopPanel.h"
 
 // Formula bar TextEditor that yields nav keys to the suggestions popup when
 // it is visible (arrows, Enter/Tab to accept, Escape to dismiss).
@@ -31,7 +32,7 @@ public:
 // Dropdown with completion candidates driven by a juce::ListBoxModel.
 struct SuggestionsBox final : public juce::ListBox, public juce::ListBoxModel
 {
-    SuggestionsBox() : juce::ListBox({}, this) { setWantsKeyboardFocus(false); setRowHeight(18); }
+    SuggestionsBox() : juce::ListBox({}, this) { setWantsKeyboardFocus(false); setRowHeight(22); }
 
     std::function<void(juce::String)> onPick;
     juce::StringArray items;
@@ -41,7 +42,7 @@ struct SuggestionsBox final : public juce::ListBox, public juce::ListBoxModel
     {
         g.fillAll(selected ? juce::Colour(0xffe0b050) : juce::Colour(0xff1e2127));
         g.setColour(selected ? juce::Colours::black : juce::Colour(0xffe6e9ee));
-        g.setFont(juce::Font(juce::FontOptions(12.0f)));
+        g.setFont(juce::Font(juce::FontOptions("Iosevka Charon Mono", 15.0f, juce::Font::bold)));
         g.drawText(items[rowNumber], 4, 0, width - 8, height, juce::Justification::centredLeft);
     }
     void listBoxItemClicked(int row, const juce::MouseEvent&) override
@@ -82,6 +83,7 @@ private:
     TrackerGrid grid;
     juce::TooltipWindow tooltipWindow { this, 300 }; // enables setTooltip() below
     Ribbon ribbon;
+    TopPanel topPanel { processorRef, grid, statusLabel };
 
     SuggestionsBox acBox;
 

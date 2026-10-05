@@ -25,16 +25,19 @@ StepResult evaluateStep(const CompiledSheet& sheet, int patternStep, const StepI
     r.length = defaultLength;
     r.playable = true;
 
-    // Evaluate visible columns left-to-right; each column transforms the signal.
+    // Evaluate all columns left-to-right; each column transforms the signal.
+    // Hidden columns are purely cosmetic: their values still apply.
     for (int col = 0; col < sheet.numCols; ++col) {
         const auto& meta = sheet.cols[static_cast<size_t>(col)];
-        if (!meta.visible)
-            continue;
-
         const double value = sheet.evaluateCell(col, patternStep, ctx);
 
         switch (meta.type) {
             case ColumnType::Note:
+                // Boolean gate: a 0/negative value suppresses this step's note.
+                if (value <= 0.5)
+                    r.playable = false;
+                break;
+            case ColumnType::Pitch:
                 // Negative = pass through the incoming note.
                 if (value >= 0.0)
                     r.pitch = static_cast<int>(std::lround(value));
@@ -219,7 +222,7 @@ void ArpEngine::fireRow(int patternStep, double stepPpq, int sampleOffset, const
     sctx.rng = &rngState;
     sctx.set(formula::Var::Step, patternStep);
 
-    // Chance gate: a visible Chance column with value c rolls c% success. A
+    // Chance gate: a Chance column with value c rolls c% success. A
     // missed roll is a rest — sequence advances but no note/CC fires.
     if (const int chanceCol = sheet.findColumn(ColumnType::Chance); chanceCol >= 0) {
         const double c = sheet.evaluateCell(chanceCol, patternStep, sctx);
@@ -230,20 +233,6 @@ void ArpEngine::fireRow(int patternStep, double stepPpq, int sampleOffset, const
         }
     }
 
-    // Visible CC columns emit a CC event on this row (modulation source).
-    for (int c = 0; c < sheet.numCols; ++c) {
-        const auto& meta = sheet.cols[static_cast<size_t>(c)];
-        if (meta.type != ColumnType::CC || !meta.visible)
-            continue;
-        const double v = sheet.evaluateCell(c, patternStep, sctx);
-        MidiOut e;
-        e.sampleOffset = sampleOffset;
-        e.isCC = true;
-        e.channel = 1;
-        e.ccNumber = meta.ccNumber;
-        e.ccValue = std::clamp(static_cast<int>(std::lround(v)), 0, 127);
-        out.push_back(e);
-    }
 
     if (settings.mode == Mode::Chord) {
         for (int i = 0; i < seqLen; ++i)

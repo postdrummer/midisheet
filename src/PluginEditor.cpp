@@ -1,4 +1,5 @@
 #include "PluginEditor.h"
+#include "SharpLNF.h"
 
 namespace {
 
@@ -7,10 +8,13 @@ namespace {
 MidisheetAudioProcessorEditor::MidisheetAudioProcessorEditor(MidisheetAudioProcessor& p)
     : AudioProcessorEditor(&p), processorRef(p), grid(p), ribbon(p, grid, formulaBar)
 {
+    static juce::SharpMonoLookAndFeel sharpLnf;
+    juce::LookAndFeel::setDefaultLookAndFeel(&sharpLnf);
+
     (void)p.getAPVTS(); // APVTS params remain available to the ribbon and for host automation.
 
     // Formula bar
-    const auto mono = juce::FontOptions(juce::Font::getDefaultMonospacedFontName(), 14.0f, juce::Font::plain);
+    const auto mono = juce::FontOptions("Iosevka Charon Mono", 17.0f, juce::Font::bold);
     nameBox.setFont(juce::Font(mono));
     nameBox.setColour(juce::TextEditor::textColourId, juce::Colour(0xffe0b050));
     nameBox.setJustification(juce::Justification::centredRight);
@@ -28,14 +32,16 @@ MidisheetAudioProcessorEditor::MidisheetAudioProcessorEditor(MidisheetAudioProce
     formulaBar.acDown = [this] { navSuggestions(1); };
     formulaBar.acAccept = [this] { acceptSuggestion(); };
     formulaBar.acDismiss = [this] { hideSuggestions(); };
-    statusLabel.setFont(juce::Font(juce::FontOptions(12.0f)));
+    statusLabel.setFont(juce::Font(juce::FontOptions("Iosevka Charon Mono", 15.0f, juce::Font::bold)));
     addAndMakeVisible(nameBox);
     addAndMakeVisible(formulaBar);
     addAndMakeVisible(statusLabel);
     addChildComponent(acBox);
     acBox.onPick = [this](juce::String item) { acceptSuggestion(item); };
 
-    addAndMakeVisible(ribbon);
+    // Ribbon is disabled for now (will be re-done); keep it hidden and un-laid-out.
+    ribbon.setVisible(false);
+    addAndMakeVisible(topPanel);
 
     grid.onSelectionChanged = [this] { showSelectedCell(); };
     grid.onHoverStatus = [this](const juce::String&) { updateStatus(); };
@@ -76,7 +82,7 @@ void MidisheetAudioProcessorEditor::showSelectedCell()
         formulaBar.setText(grid.cellFormula(), false);
 
     updateStatus();
-    ribbon.activeColumnChanged();
+    // ribbon.activeColumnChanged(); // ribbon hidden
 }
 
 void MidisheetAudioProcessorEditor::updateStatus()
@@ -264,7 +270,7 @@ void MidisheetAudioProcessorEditor::timerCallback()
 
 void MidisheetAudioProcessorEditor::fitHeightToRows()
 {
-    constexpr int kChrome = 10 + 10 + (24 + 76 + 6) + (26 + 4) + (20 + 4); // margins + ribbon + bar + status
+    constexpr int kChrome = 10 + 10 + 168 + 6 + (30 + 4) + (22 + 4); // margins + top panel + bar + status
     const int rows = processorRef.getSheet().getNumRows();
     const int want = kChrome + grid.headerH() + (rows + 1) * grid.rowH(); // +1 for the "+ Add row" strip
     const int h = juce::jlimit(420, 1600, want);
@@ -274,17 +280,16 @@ void MidisheetAudioProcessorEditor::fitHeightToRows()
 void MidisheetAudioProcessorEditor::resized() {
     auto area = getLocalBounds().reduced(10);
 
-    // Ribbon tabs + current tab's band.
-    const int tabH = 24, bandH = 76;
-    ribbon.setBounds(area.removeFromTop(tabH + bandH));
+
+    topPanel.setBounds(area.removeFromTop(172));
     area.removeFromTop(6);
 
-    auto bar = area.removeFromTop(26);
-    nameBox.setBounds(bar.removeFromLeft(70));
+    auto bar = area.removeFromTop(30);
+    nameBox.setBounds(bar.removeFromLeft(80));
     formulaBar.setBounds(bar);
     area.removeFromTop(4);
 
-    statusLabel.setBounds(area.removeFromBottom(20));
+    statusLabel.setBounds(area.removeFromBottom(22));
     area.removeFromBottom(4);
     grid.setBounds(area);
 }

@@ -3,9 +3,10 @@
 // Column system for the spreadsheet-arpeggiator.
 //
 // A Column is a parameter (Note, Shift, Octave, Velocity, Gate, Length, Time,
-// Chance, CC, ...). Columns can be added, removed, shown, hidden, renamed,
+// Chance, CC, ...). Columns can be added, deleted, shown, hidden, renamed,
 // reordered, and assigned a data type. Each column has a default value (and
-// optional default formula) used when the column is hidden or a cell is empty.
+// optional default formula) used when a cell is empty. Hiding a column is
+// cosmetic: its values still evaluate and affect output.
 //
 // ColumnMeta is the compact, audio-thread-safe form of a Column: no strings,
 // no allocation, fixed size.
@@ -24,7 +25,8 @@ constexpr int kMaxRows = 64;
 
 enum class ColumnType : uint8_t {
     Number,   // generic numeric value
-    Note,     // MIDI note number (0..127) or note name; <0 = pass through
+    Note,     // boolean step gate: <0.5 = rest/off; empty (default) = on
+    Pitch,    // MIDI note number (0..127) or note name ("Pitch" column); <0 = pass through
     Shift,    // semitone shift
     Octave,   // octave shift (value * 12 semitones)
     Velocity, // 0..127; <=0 = use incoming note velocity
@@ -42,7 +44,8 @@ inline const char* columnTypeName(ColumnType t)
 {
     switch (t) {
         case ColumnType::Number: return "Number";
-        case ColumnType::Note: return "Pitch";
+        case ColumnType::Note: return "Note";
+        case ColumnType::Pitch: return "Pitch";
         case ColumnType::Shift: return "Shift";
         case ColumnType::Octave: return "Octave";
         case ColumnType::Velocity: return "Velocity";
@@ -64,7 +67,7 @@ struct Column {
     std::string name;                  // user-editable, shown under the type
     ColumnType type = ColumnType::Number;
     bool visible = true;
-    double defaultValue = 0.0;         // used when hidden or a cell is empty
+    double defaultValue = 0.0;         // used when a cell is empty
     std::string defaultFormula;        // evaluated when a cell is empty
     int ccNumber = 0;                  // for ColumnType::CC
 };

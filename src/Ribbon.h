@@ -37,7 +37,7 @@ public:
         g.setColour(juce::Colour(0xff333946));
         g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(1), 3.0f, 1.0f);
         g.setColour(juce::Colour(0xffe6e9ee));
-        g.setFont(juce::Font(juce::FontOptions(juce::Font::getDefaultMonospacedFontName(), 13.0f, juce::Font::plain)));
+        g.setFont(juce::Font(juce::FontOptions("Iosevka Charon Mono", 15.0f, juce::Font::bold)));
         g.drawText(juce::String(value, decimals_), 0, 0, getWidth(), getHeight(), juce::Justification::centred);
     }
 

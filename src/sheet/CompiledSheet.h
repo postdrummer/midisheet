@@ -86,11 +86,12 @@ struct CompiledSheet {
     // Callback installed into formula::Context so cell references hop back
     // through evaluateCell(). `index` is column-major: col * kCellRows + row.
     //
-    // A referenced cell contributes its computed value only when its column
-    // is visible and not to the right of the source cell; otherwise we fall
-    // back to that column's default chain (default formula > default value).
+    // A referenced cell contributes its computed value only when not to the
+    // right of the source cell; otherwise we fall back to that column's
+    // default chain (default formula > default value). Hidden columns count
+    // as visible here: hiding is cosmetic and does not change evaluation.
     // This is the documented behavior for empty cells (handled in
-    // evaluateCell itself), hidden columns, and forward references.
+    // evaluateCell itself) and forward references.
     static double evalCellRef(const void* self, int index, const formula::Context& ctx)
     {
         const auto& sheet = *static_cast<const CompiledSheet*>(self);
@@ -101,7 +102,7 @@ struct CompiledSheet {
 
         const auto& meta = sheet.cols[static_cast<size_t>(col)];
         const bool forward = ctx.srcCol >= 0 && col > ctx.srcCol;
-        if (!forward && meta.visible)
+        if (!forward)
             return sheet.evaluateCell(col, row, ctx);
 
         if (ctx.depth >= kMaxRefDepth)
@@ -115,11 +116,12 @@ struct CompiledSheet {
         return meta.defaultValue;
     }
 
-    // Find the first visible column of a given type (-1 if none).
+    // Find the first column of a given type (-1 if none). Hidden columns
+    // are included: hiding is cosmetic and does not change evaluation.
     int findColumn(ColumnType type) const
     {
         for (int c = 0; c < numCols; ++c)
-            if (cols[static_cast<size_t>(c)].type == type && cols[static_cast<size_t>(c)].visible)
+            if (cols[static_cast<size_t>(c)].type == type)
                 return c;
         return -1;
     }

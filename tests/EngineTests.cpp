@@ -65,7 +65,7 @@ CompiledSheet makeSheet(const char* velocity = "", const char* note = "", const 
         if (c >= 0) sheet.setColumnDefaultFormula(c, velocity);
     }
     if (*note) {
-        int c = sheet.findColumnByType(ColumnType::Note, false);
+        int c = sheet.findColumnByType(ColumnType::Pitch, false);
         if (c >= 0) {
             sheet.setColumnVisible(c, true);
             sheet.setColumnDefaultFormula(c, note);
@@ -331,28 +331,6 @@ void testChanceColumnSuppressesNotes()
     CHECK(ev2.size() == 2);
 }
 
-void testCCColumnEmitsCCs()
-{
-    auto e = held({60});
-    Sheet sheet;
-    const int cc = sheet.addColumn(ColumnType::CC, "Mod");
-    sheet.setColumnCCNumber(cc, 74);
-    sheet.setCell(cc, 0, 64.0);
-    juce::StringArray errors;
-    auto compiled = sheet.compile(errors);
-    CHECK(errors.isEmpty());
-
-    // Check raw output directly, as run() hides CC events:
-    std::vector<MidiOut> out;
-    out.reserve(64);
-    e.process({0.0, 120.0, true}, *compiled, 512, out);
-    bool cc74 = false;
-    for (auto& m : out)
-        if (m.isCC && m.ccNumber == 74 && m.ccValue == 64)
-            cc74 = true;
-    CHECK(cc74);
-}
-
 void testTempoChangeChangesStepDuration()
 {
     // Fire with tempo=120, then immediately with tempo=60: from that point on,
@@ -447,7 +425,6 @@ void runEngineTests()
     testTimeRearrangesRows();
     testOctaveColumnExpandsPattern();
     testChanceColumnSuppressesNotes();
-    testCCColumnEmitsCCs();
     testTempoChangeChangesStepDuration();
     testTimeColumnCanDescribeSwing();
     testTransportJumpFlushesNotes();

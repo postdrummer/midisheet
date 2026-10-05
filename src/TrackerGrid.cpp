@@ -17,8 +17,8 @@ constexpr int kPlusColW = 28; // trailing "+" column strip
 
 juce::Font mono(float size, bool bold = false)
 {
-    return juce::Font(juce::FontOptions(juce::Font::getDefaultMonospacedFontName(), size,
-                                        bold ? juce::Font::bold : juce::Font::plain));
+    return juce::Font(juce::FontOptions("Iosevka Charon Mono", size,
+                                        juce::Font::bold));
 }
 
 } // namespace
@@ -89,7 +89,7 @@ juce::String TrackerGrid::cellError() const
             arp::formula::Program::compile(*f, err, proc.getSheet().getNumColumns(), &names);
             // A note name in a Note column ("C3", "=F#4") is valid input; the
             // sheet stores it as that note rather than a reference to cell C3.
-            if (!err.empty() && proc.getSheet().getColumn(dCol).type == arp::ColumnType::Note) {
+            if (!err.empty() && proc.getSheet().getColumn(dCol).type == arp::ColumnType::Pitch) {
                 auto t = juce::String(*f).trim();
                 if (t.startsWith("="))
                     t = t.substring(1).trim();
@@ -369,7 +369,7 @@ void TrackerGrid::refresh()
             if (!pv.isDefault && text.trim().isNotEmpty()) {
                 std::string err;
                 arp::formula::Program::compile(text.toStdString(), err, numCols, &names);
-                if (!err.empty() && meta.type == arp::ColumnType::Note) {
+                if (!err.empty() && meta.type == arp::ColumnType::Pitch) {
                     auto t = text.trim();
                     if (t.startsWith("="))
                         t = t.substring(1).trim();
@@ -378,7 +378,10 @@ void TrackerGrid::refresh()
                 }
                 pv.isError = !err.empty();
             }
-            if (pv.isError) {
+            if (pv.isDefault) {
+                // Cells that fall back to the column default render empty.
+                pv.text = {};
+            } else if (pv.isError) {
                 pv.text = "ERR";
             } else {
                 // Show the evaluated value for this column.
@@ -393,8 +396,11 @@ void TrackerGrid::refresh()
                 ctx.set(arp::formula::Var::Length, 1.0);
                 const double val = compiled->evaluateCell(c, r, ctx);
                 switch (meta.type) {
-                    case arp::ColumnType::Note:
+                    case arp::ColumnType::Pitch:
                         pv.text = val < 0 ? "---" : juce::MidiMessage::getMidiNoteName(static_cast<int>(val), true, true, 4);
+                        break;
+                    case arp::ColumnType::Note:
+                        pv.text = val >= 0.5 ? "On" : "Off";
                         break;
                     case arp::ColumnType::Velocity:
                         pv.text = val < 0 ? "---" : juce::String(juce::roundToInt(val));
@@ -447,7 +453,7 @@ void TrackerGrid::autoFitColumnWidths()
     customColWidths.assign(static_cast<size_t>(sheet.getNumColumns()), 72);
     for (int r = 0; r < arp::kMaxRows; ++r) {
         for (int c = 0; c < static_cast<int>(preview[r].size()); ++c) {
-            const int want = static_cast<int>(preview[r][c].text.length()) * 9 + 16;
+            const int want = static_cast<int>(preview[r][c].text.length()) * 11 + 22;
             customColWidths[static_cast<size_t>(c)] =
                 juce::jmax(28, juce::jmin(240, juce::jmax(customColWidths[c], want)));
         }
@@ -549,7 +555,7 @@ void TrackerGrid::paint(juce::Graphics& g)
         g.setColour(juce::Colour(0xff2a2f38));
         g.fillRect(0, 0, stripW(), headerH());
         g.setColour(kDim);
-        g.setFont(mono(10.0f, true));
+        g.setFont(mono(13.0f, true));
         g.drawText("ALL", 0, 0, stripW(), headerH(), juce::Justification::centred);
     }
 
@@ -566,9 +572,9 @@ void TrackerGrid::paint(juce::Graphics& g)
             g.fillRect(x, 0, cw, headerH());
         }
         g.setColour(meta.visible ? kDim : juce::Colour(0xff50545c));
-        g.setFont(mono(10.0f, true));
+        g.setFont(mono(13.0f, true));
         g.drawText(meta.name, x, 2, cw, 14, juce::Justification::centred);
-        g.setFont(mono(9.0f));
+        g.setFont(mono(12.0f));
         g.drawText(arp::columnLetters(dataCol), x, 14, cw, 14, juce::Justification::centred);
     }
 
@@ -585,7 +591,7 @@ void TrackerGrid::paint(juce::Graphics& g)
         const bool rowHl = r >= sr0 && r <= sr1 && sc0 == 1 && sc1 == totalCols - 1;
         const bool stepOn = sheet.isStepActive(r);
 
-        g.setColour(!inPattern ? kInactive : r == playing ? kPlay : (r % 4 == 0 ? kBeat : kBg));
+        g.setColour(kBg);
         g.fillRect(0, y, w, rowH());
 
         // Hidden rows render as a thin stripe; their cells/audio are skipped.
@@ -601,16 +607,8 @@ void TrackerGrid::paint(juce::Graphics& g)
             continue;
         }
 
-        if (rowHl) {
-            g.setColour(juce::Colour(0xff3a3f4a));
-            g.fillRect(0, y, stripW(), rowH());
-        }
-        g.setColour(r % 4 == 0 && inPattern ? kText : kDim);
-        if (!stepOn && r != playing)
-            g.setColour(kDim.withAlpha(0.5f));
-        if (r == playing)
-            g.setColour(playheadColour);
-        g.setFont(mono(13.0f));
+        g.setColour(r == playing ? playheadColour : kDim);
+        g.setFont(mono(16.0f));
         g.drawText(juce::String(r + 1).paddedLeft('0', 2), 6, y, stripW() - 6, rowH(), juce::Justification::centredLeft);
 
         // Data columns.
@@ -634,7 +632,7 @@ void TrackerGrid::paint(juce::Graphics& g)
             if (!sheet.getColumn(c).visible && !pv.isDefault)
                 colr = colr.withAlpha(0.5f);
             g.setColour(colr);
-            g.setFont(mono(13.0f));
+            g.setFont(mono(16.0f));
             g.drawText(pv.text + (pv.isRandom ? "~" : ""), cell.reduced(6, 0), juce::Justification::centredLeft);
 
             if (cursor) {
@@ -690,7 +688,7 @@ void TrackerGrid::paint(juce::Graphics& g)
             g.setColour(juce::Colour(0xff2a2f38));
             g.fillRect(px, 0, w - px, headerH());
             g.setColour(kDim);
-            g.setFont(mono(14.0f, true));
+            g.setFont(mono(17.0f, true));
             g.drawText("+", px, 0, w - px, headerH(), juce::Justification::centred);
             g.setColour(juce::Colour(0xff191d24));
             g.fillRect(px, headerH(), w - px, getHeight() - headerH());
@@ -732,7 +730,7 @@ bool TrackerGrid::keyPressed(const juce::KeyPress& key)
     if (mods.isCommandDown() && code == 'C') { copySelection(); return true; }
     if (mods.isCommandDown() && code == 'V') { pasteIntoSelection(); return true; }
 
-    // Cmd+Shift+= / Cmd+Shift+- add or remove rows / columns for the last-
+    // Cmd+Shift+= / Cmd+Shift+- add or delete rows / columns for the last-
     // selected strip dimension. Falls back to the current cell dimension.
     if (mods.isCommandDown() && mods.isShiftDown()) {
         const bool wantAdd = (ch == '+' || ch == '=');
@@ -756,7 +754,7 @@ bool TrackerGrid::keyPressed(const juce::KeyPress& key)
                 if (wantDel) {
                     performEdit([this, dc0, count] {
                         for (int i = 0; i < count; ++i)
-                            proc.getSheet().removeColumn(dc0);
+                            proc.getSheet().deleteColumn(dc0);
                     });
                 } else {
                     const int a = (sc0 - 1);
@@ -889,7 +887,7 @@ void TrackerGrid::mouseDown(const juce::MouseEvent& e)
             m->addSeparator();
             m->addItem(3, "Add column to the left");
             m->addItem(4, "Add column to the right");
-            m->addItem(5, "Remove column");
+            m->addItem(5, "Delete column");
             auto screenPos = localPointToGlobal(e.position).toInt();
             auto options = juce::PopupMenu::Options().withTargetComponent(this).withTargetScreenArea(
                 juce::Rectangle<int>(screenPos.x, screenPos.y, 1, 1));
@@ -897,6 +895,7 @@ void TrackerGrid::mouseDown(const juce::MouseEvent& e)
                 if (result == 1) {
                     auto* w = new juce::AlertWindow("Rename column", {}, juce::AlertWindow::NoIcon);
                     w->addTextEditor("name", proc.getSheet().getColumn(c).name, "Name");
+                    w->getTextEditor("name")->setFont(juce::Font(juce::FontOptions("Iosevka Charon Mono", 13.0f, juce::Font::bold)));
                     w->addButton("OK", 1);
                     w->addButton("Cancel", 0);
                     w->enterModalState(true, juce::ModalCallbackFunction::create([this, w, c](int b) {
@@ -964,7 +963,7 @@ void TrackerGrid::mouseDown(const juce::MouseEvent& e)
                          int count = inSel ? (sc.second - sc.first + 1) : 1;
                          int start = inSel ? (sc.first - 1) : dc;
                          for (int i = 0; i < count; ++i)
-                             s.removeColumn(start);
+                             s.deleteColumn(start);
                      });
                      const int total = proc.getSheet().getNumColumns() + 1;
                      col = juce::jlimit(1, total - 1, col);
@@ -1149,6 +1148,34 @@ void TrackerGrid::mouseDown(const juce::MouseEvent& e)
         return;
 
     colDragFrom = -1;
+
+    // Prepare a possible cell value scrub.
+    if (c >= 1 && r >= 0 && r < proc.getSheet().getNumRows()) {
+        const int dCol = c - 1;
+        const int dRow = r;
+        scrubRow = dRow;
+        scrubCol = dCol;
+        scrubActive = false;
+        scrubUndoTaken = false;
+        // Determine the current value to start from.
+        auto& s_ = proc.getSheet();
+        if (s_.hasCellValue(dCol, dRow))
+            scrubStartValue = s_.getCellValue(dCol, dRow);
+        else if (const juce::String f { s_.getCellFormula(dCol, dRow) } ; f.trim().isNotEmpty()) {
+            auto t = f.trim();
+            if (t.startsWithChar('='))
+                t = t.substring(1).trim();
+            const double n = t.getDoubleValue();
+            const bool hasVal = t.isNotEmpty() && t.containsOnly("0123456789.-+e \t");
+            scrubStartValue = hasVal ? n : s_.getColumn(dCol).defaultValue;
+        } else {
+            scrubStartValue = s_.getColumn(dCol).defaultValue;
+        }
+    } else {
+        scrubRow = scrubCol = -1;
+        scrubActive = false;
+    }
+
     select(r, c, e.mods.isShiftDown());
 }
 
@@ -1184,6 +1211,50 @@ void TrackerGrid::mouseDrag(const juce::MouseEvent& e)
         }
         return;
     }
+
+    // Cell value scrub: a vertical drag adjusts the active cell's value.
+    if (scrubCol >= 0 && scrubRow >= 0) {
+        const float dy = dragStart.y - e.position.y;
+        const float dx = std::fabs(e.position.x - dragStart.x);
+        if (!scrubActive && std::fabs(dy) > 6.0f && std::fabs(dy) >= dx)
+            scrubActive = true;
+        if (scrubActive) {
+            const float deltaDown = e.position.y - dragStart.y;
+            const double steps = deltaDown < 0 ? -std::floor(std::abs(deltaDown) / 12.0f + 0.5f)
+                                               : std::floor(deltaDown / 12.0f + 0.5f);
+            double v = scrubStartValue + steps;
+            // Clamp per column type.
+            const auto dc = scrubCol, dr = scrubRow;
+            const auto tt = proc.getSheet().getColumn(dc).type;
+            const auto lo = [&](double lo_, double hi_) { v = juce::jlimit(lo_, hi_, v); };
+            switch (tt) {
+                case arp::ColumnType::Pitch: lo(0, 127); break;
+                case arp::ColumnType::Note: lo(0, 1); break;
+                case arp::ColumnType::Shift: lo(-48, 48); break;
+                case arp::ColumnType::Octave: lo(-8, 8); break;
+                case arp::ColumnType::Velocity: lo(0, 127); break;
+                case arp::ColumnType::Gate: lo(0, 100); break;
+                case arp::ColumnType::Percent: lo(0, 100); break;
+                case arp::ColumnType::Chance: lo(0, 100); break;
+                case arp::ColumnType::Length: lo(0, 128); break;
+                case arp::ColumnType::Time: lo(-4, 4); break;
+                case arp::ColumnType::CC: lo(0, 127); break;
+                default: v = juce::jlimit(-10000.0, 10000.0, v); break;
+            }
+            if (!scrubUndoTaken) {
+                undoStack.push_back(proc.getSheet());
+                if (undoStack.size() > kMaxUndo)
+                    undoStack.erase(undoStack.begin());
+                redoStack.clear();
+                scrubUndoTaken = true;
+            }
+            proc.getSheet().setCell(dc, dr, v);
+            proc.sheetChanged();
+            refresh();
+            return;
+        }
+    }
+
     int r, c;
     if (!cellAt(e.position, r, c))
         return;
@@ -1212,11 +1283,37 @@ void TrackerGrid::mouseUp(const juce::MouseEvent&)
     colDragActive = false;
     colDragFrom = -1;
     colDragOver = -1;
+    scrubActive = false;
+    scrubUndoTaken = false;
+    scrubRow = -1;
+    scrubCol = -1;
     repaint();
 }
 
 void TrackerGrid::mouseDoubleClick(const juce::MouseEvent& e)
 {
+    // Double-clicking a column header renames that column.
+    if (e.position.y < headerH()) {
+        int c = -1; bool onCol = false;
+        headerAt(e.position, c, onCol);
+        if (onCol && c >= 1) {
+            const int dataCol = c - 1;
+            auto* w = new juce::AlertWindow("Rename column", {}, juce::AlertWindow::NoIcon);
+            w->addTextEditor("name", proc.getSheet().getColumn(dataCol).name, "Name");
+            w->getTextEditor("name")->setFont(juce::Font(juce::FontOptions("Iosevka Charon Mono", 13.0f, juce::Font::bold)));
+            w->addButton("OK", 1);
+            w->addButton("Cancel", 0);
+            w->enterModalState(true, juce::ModalCallbackFunction::create([this, w, dataCol](int b) {
+                if (b == 1) {
+                    const auto name = w->getTextEditorContents("name").trim().toStdString();
+                    if (!name.empty())
+                        edit([this, dataCol, name] { proc.getSheet().setColumnName(dataCol, name); });
+                }
+                delete w;
+            }), false);
+            return;
+        }
+    }
     int r, c;
     if (cellAt(e.position, r, c) && c >= 1 && onEditRequested)
         onEditRequested(cellFormula());

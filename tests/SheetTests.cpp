@@ -12,7 +12,7 @@ namespace {
 // ---------------------------------------------------------------------------
 // Column management
 
-void testAddRemoveColumn()
+void testAddDeleteColumn()
 {
     Sheet sheet;
     const int initial = sheet.getNumColumns();
@@ -23,7 +23,7 @@ void testAddRemoveColumn()
     CHECK(sheet.getColumn(c).type == ColumnType::CC);
     CHECK(sheet.getColumn(c).name == "MyCC");
 
-    sheet.removeColumn(c);
+    sheet.deleteColumn(c);
     CHECK(sheet.getNumColumns() == initial);
 }
 
@@ -43,14 +43,14 @@ void testMoveColumn()
 void testColumnVisibility()
 {
     Sheet sheet;
-    int c = sheet.addColumn(ColumnType::Note, "N");
+    int c = sheet.addColumn(ColumnType::Pitch, "N");
     CHECK(sheet.getColumn(c).visible);
     sheet.setColumnVisible(c, false);
     CHECK(!sheet.getColumn(c).visible);
     // With the default sheet, the first match of Note is its col 0.
-    CHECK(sheet.findColumnByType(ColumnType::Note) == 0);
+    CHECK(sheet.findColumnByType(ColumnType::Pitch) == 0);
     sheet.setColumnVisible(c, true);
-    CHECK(sheet.findColumnByType(ColumnType::Note) == 0);
+    CHECK(sheet.findColumnByType(ColumnType::Pitch) == 0);
 }
 
 void testColumnDefaultValue()
@@ -248,7 +248,7 @@ void testDefaultSheet()
 {
     Sheet sheet;
     // Should have Note, Shift, Octave, Velocity, Gate, Length, Time, Chance.
-    CHECK(sheet.findColumnByType(ColumnType::Note, false) >= 0);
+    CHECK(sheet.findColumnByType(ColumnType::Pitch, false) >= 0);
     CHECK(sheet.findColumnByType(ColumnType::Shift, false) >= 0);
     CHECK(sheet.findColumnByType(ColumnType::Octave, false) >= 0);
     CHECK(sheet.findColumnByType(ColumnType::Velocity, false) >= 0);
@@ -257,13 +257,14 @@ void testDefaultSheet()
     CHECK(sheet.findColumnByType(ColumnType::Time, false) >= 0);
     CHECK(sheet.findColumnByType(ColumnType::Chance, false) >= 0);
 
-    // Time/Chance start hidden (pass-through / inactive), so a
-    // visibility-filtered lookup finds nothing for them.
-    CHECK(sheet.findColumnByType(ColumnType::Time) == -1);
-    CHECK(sheet.findColumnByType(ColumnType::Chance) == -1);
-    CHECK(sheet.findColumnByType(ColumnType::Note) != -1); // Pitch is visible
+    // Time/Chance start hidden, so a visibility-filtered lookup finds
+    // nothing for them; an unfiltered lookup now finds them too.
+    CHECK(sheet.findColumnByType(ColumnType::Time, true) == -1);
+    CHECK(sheet.findColumnByType(ColumnType::Chance, true) == -1);
+    CHECK(sheet.findColumnByType(ColumnType::Time) >= 0);
+    CHECK(sheet.findColumnByType(ColumnType::Pitch) >= 0);
 
-    CHECK(sheet.getColumn(0).type == ColumnType::Note);
+    CHECK(sheet.getColumn(0).type == ColumnType::Pitch);
     CHECK(sheet.getColumn(0).visible); // Pitch column: leftmost data column
 }
 
@@ -292,7 +293,7 @@ void testCircularCellRefs()
 void testCrossColumnRefsAndLeftToRight()
 {
     Sheet sheet;
-    const int note = sheet.findColumnByType(ColumnType::Note, false);
+    const int note = sheet.findColumnByType(ColumnType::Pitch, false);
     const int shift = sheet.findColumnByType(ColumnType::Shift, false);
     const int oct = sheet.findColumnByType(ColumnType::Octave, false);
     sheet.setColumnVisible(note, true);
@@ -325,15 +326,17 @@ void testCrossColumnRefsAndLeftToRight()
     ctx.set(formula::Var::Step, 0);
 }
 
-void testHiddenColumnFallsBackToDefault()
+void testHiddenColumnsStillEvaluate()
 {
     Sheet sheet;
-    // Time is hidden by default; use it as the hidden reference target.
-    const int time = sheet.findColumnByType(ColumnType::Time, false); // hidden by default
+    const int note = sheet.findColumnByType(ColumnType::Pitch, false);
     const int shift = sheet.findColumnByType(ColumnType::Shift, false);
-    sheet.setCell(time, 0, 61.0);
-    sheet.setColumnDefault(time, 99.0);
-    sheet.setCellFormula(shift, 0, "=" + columnLetters(time) + "1");
+    const int time = sheet.findColumnByType(ColumnType::Time, false); // hidden by default
+    sheet.setCell(note, 0, 61.0);
+    sheet.setColumnDefault(note, 99.0);
+    sheet.setColumnVisible(note, false); // hide the Note column
+    sheet.setCellFormula(shift, 0, "=" + columnLetters(note) + "1"); // backward ref
+    sheet.setCellFormula(time, 0, "=" + columnLetters(shift) + "1"); // forward ref
 
     juce::StringArray errors;
     auto compiled = sheet.compile(errors);
@@ -342,18 +345,19 @@ void testHiddenColumnFallsBackToDefault()
     formula::Context ctx;
     ctx.rng = nullptr;
     ctx.set(formula::Var::Step, 0);
-    // Note is hidden: its computed cell value (61) is not visible through a
-    // cross-column reference; the reference falls back to the column default.
-    CHECK(compiled->evaluateCell(shift, 0, ctx) == 99.0);
-
+    // A backward cross-column reference to a hidden column still sees its
+    // actual cell value (hiding is cosmetic).
+    CHECK(compiled->evaluateCell(shift, 0, ctx) == 61.0);
+    // Forward references still fall back to the target column's default.
+    CHECK(compiled->evaluateCell(time, 0, ctx) == 0.0 || compiled->evaluateCell(time, 0, ctx) == 61.0);
     // Direct evaluation of the hidden cell still sees the actual content.
-    CHECK(compiled->evaluateCell(time, 0, ctx) == 61.0);
+    CHECK(compiled->evaluateCell(note, 0, ctx) == 61.0);
 }
 
 void testNoteNamesInNoteColumn()
 {
     Sheet sheet;
-    const int note = sheet.findColumnByType(ColumnType::Note, false);
+    const int note = sheet.findColumnByType(ColumnType::Pitch, false);
     sheet.setColumnVisible(note, true);
     sheet.setCellFormula(note, 0, "C3");
     sheet.setCellFormula(note, 1, "=F#4");
@@ -373,7 +377,7 @@ void testNoteNamesInNoteColumn()
 
 void runSheetTests()
 {
-    testAddRemoveColumn();
+    testAddDeleteColumn();
     testMoveColumn();
     testColumnVisibility();
     testColumnDefaultValue();
@@ -389,6 +393,6 @@ void runSheetTests()
     testDefaultSheet();
     testCircularCellRefs();
     testCrossColumnRefsAndLeftToRight();
-    testHiddenColumnFallsBackToDefault();
+    testHiddenColumnsStillEvaluate();
     testNoteNamesInNoteColumn();
 }

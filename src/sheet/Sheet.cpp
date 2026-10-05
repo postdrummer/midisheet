@@ -35,6 +35,8 @@ int Sheet::addColumn(ColumnType type, const std::string& name)
     c.type = type;
     c.name = !name.empty() ? name : columnTypeName(type);
     c.defaultValue = type == ColumnType::Velocity ? -1.0 // <0 = pass the incoming velocity through
+                        : type == ColumnType::Pitch ? -1.0 // <0 = pass the incoming note's pitch through
+                        : type == ColumnType::Note ? 1.0   // boolean gate: empty cells default to on
                         : type == ColumnType::Percent || type == ColumnType::Chance ? 100.0
                         : 0.0;
     columns_.push_back(c);
@@ -44,7 +46,7 @@ int Sheet::addColumn(ColumnType type, const std::string& name)
     return getNumColumns() - 1;
 }
 
-void Sheet::removeColumn(int index)
+void Sheet::deleteColumn(int index)
 {
     if (index < 0 || index >= getNumColumns())
         return;
@@ -295,7 +297,7 @@ std::unique_ptr<CompiledSheet> Sheet::compile(juce::StringArray& errors) const
         if (!src.defaultFormula.empty()) {
             // In a Note column the default may be a note name ("=C3").
             bool noteDefault = false;
-            if (src.type == ColumnType::Note) {
+            if (src.type == ColumnType::Pitch) {
                 if (const double nn = formula::parseNoteName(stripWrap(src.defaultFormula)); nn >= 0.0) {
                     dst.defaultValue = nn;
                     noteDefault = true;
@@ -321,7 +323,7 @@ std::unique_ptr<CompiledSheet> Sheet::compile(juce::StringArray& errors) const
             if (!f.empty()) {
                 // In a Note column, a bare note name stored as the cell text
                 // ("C3", "=F#4") means that note, not a reference to cell C3.
-                if (src.type == ColumnType::Note) {
+                if (src.type == ColumnType::Pitch) {
                     if (const double nn = formula::parseNoteName(stripWrap(f)); nn >= 0.0) {
                         out->cells[static_cast<size_t>(idx)] = nn;
                         out->hasValue[static_cast<size_t>(idx)] = true;
@@ -491,7 +493,7 @@ void Sheet::setupDefaultSheet()
         return c;
     };
 
-    add(ColumnType::Note, "Pitch", true, -1.0); // leftmost; value >= 0 selects this step's note
+    add(ColumnType::Pitch, "Pitch", true, -1.0); // leftmost; value >= 0 selects this step's note
     add(ColumnType::Shift, "Shift", true, 0.0);
     add(ColumnType::Octave, "Octave", true, 0.0);
     add(ColumnType::Velocity, "Velocity", true, -1.0); // visible, but <0 passes the incoming velocity through

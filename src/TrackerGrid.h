@@ -14,7 +14,7 @@
  * Layout (like Excel / LibreOffice Calc):
  *   - corner square (select all) over the row numbers
  *   - column headers: data type (top line), column name (bottom line);
- *     right-click for type/rename/hide/add/remove; click to select column
+ *     right-click for type/rename/hide/add/delete; click to select column
  *   - row numbers down the left; click to select the row
  *   - cells show the evaluated value for a preview chord (C E G, velocity 100,
  *     Up order); the formula behind the active cell is in the formula bar
@@ -76,6 +76,8 @@ public:
     // editor's Columns ribbon can reuse it.
     void performEdit(const std::function<void()>& change) { edit(change); }
     void selectCell(int newRow, int newCol, bool extend = false) { select(newRow, newCol, extend); }
+    std::pair<int, int> selRows() const; // normalized selection rectangle
+    std::pair<int, int> selCols() const;
 
     // --- View flags / zoom / autofit ---------------------------------------
     bool showGridlines = true;
@@ -95,9 +97,9 @@ public:
     float getZoom() const { return zoom; }
     void autoFitColumnWidths();
 
-    int headerH() const { return showColumnHeaders ? 30 : 0; }
+    int headerH() const { return showColumnHeaders ? 34 : 0; }
     int stripW() const { return showRowNumbers ? 34 : 0; }
-    int rowH() const { return std::max(8, static_cast<int>(20.0f * zoom)); }
+    int rowH() const { return std::max(8, static_cast<int>(22.0f * zoom)); }
     int colX(int c, int width, int numCols) const;
     int colW(int c, int width, int numCols) const;
 
@@ -120,8 +122,6 @@ private:
     bool cellAt(juce::Point<float>, int& r, int& c) const;
     void headerAt(juce::Point<float>, int& c, bool& isOnColumn) const;
 
-    std::pair<int, int> selRows() const; // normalized selection rectangle
-    std::pair<int, int> selCols() const;
     bool isActiveCell() const;           // selection is a single cell
 
     std::string* formulaRef(int r, int c);
@@ -142,6 +142,12 @@ private:
     int colDragFrom = -1; // source data column
     int colDragOver = -1; // drop target data column
     juce::Point<float> dragStart;
+
+    // Cell value scrub (vertical drag over a cell adjusts its value).
+    bool scrubActive = false;
+    bool scrubUndoTaken = false;
+    int scrubRow = -1, scrubCol = -1;
+    double scrubStartValue = 0.0;
 
     juce::String currentHoverStatus; // updated by mouseMove/mouseExit
     int pasteMode_ = 0;

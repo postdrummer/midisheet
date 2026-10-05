@@ -32,7 +32,7 @@ public:
 
     // Adds a column of the given type. Returns the new column's index.
     int addColumn(ColumnType type, const std::string& name = {});
-    void removeColumn(int index);
+    void deleteColumn(int index);
     void moveColumn(int from, int to); // reorder (drag or move left/right)
 
     void setColumnName(int col, const std::string& name);
@@ -55,10 +55,10 @@ public:
 
     Column& getColumn(int index);
     const Column& getColumn(int index) const;
-    // First column of the given type, or -1. By default only visible columns
-    // match, so a hidden column is "not found"; pass visibleOnly = false to
-    // include hidden columns (e.g. to find one in order to show it again).
-    int findColumnByType(ColumnType type, bool visibleOnly = true) const;
+    // First column of the given type, or -1. By default hidden columns are
+    // included too (they still evaluate); pass visibleOnly = true to get
+    // only currently-visible columns.
+    int findColumnByType(ColumnType type, bool visibleOnly = false) const;
 
     // --- Cell access -------------------------------------------------------
 
