@@ -1,17 +1,11 @@
 #include "PluginEditor.h"
 #include "SharpLNF.h"
 
-namespace {
-
-} // namespace
-
 MidisheetAudioProcessorEditor::MidisheetAudioProcessorEditor(MidisheetAudioProcessor& p)
-    : AudioProcessorEditor(&p), processorRef(p), grid(p), ribbon(p, grid, formulaBar)
+    : AudioProcessorEditor(&p), processorRef(p), grid(p)
 {
     static juce::SharpMonoLookAndFeel sharpLnf;
     juce::LookAndFeel::setDefaultLookAndFeel(&sharpLnf);
-
-    (void)p.getAPVTS(); // APVTS params remain available to the ribbon and for host automation.
 
     // Formula bar
     const auto mono = juce::FontOptions("Iosevka Charon Mono", 17.0f, juce::Font::bold);
@@ -39,8 +33,6 @@ MidisheetAudioProcessorEditor::MidisheetAudioProcessorEditor(MidisheetAudioProce
     addChildComponent(acBox);
     acBox.onPick = [this](juce::String item) { acceptSuggestion(item); };
 
-    // Ribbon is disabled for now (will be re-done); keep it hidden and un-laid-out.
-    ribbon.setVisible(false);
     addAndMakeVisible(topPanel);
 
     grid.onSelectionChanged = [this] { showSelectedCell(); };
@@ -82,7 +74,6 @@ void MidisheetAudioProcessorEditor::showSelectedCell()
         formulaBar.setText(grid.cellFormula(), false);
 
     updateStatus();
-    // ribbon.activeColumnChanged(); // ribbon hidden
 }
 
 void MidisheetAudioProcessorEditor::updateStatus()
@@ -95,11 +86,6 @@ void MidisheetAudioProcessorEditor::updateStatus()
     }
 
     const auto hover = grid.hoverStatusText();
-    if (ribbonHover.isNotEmpty()) {
-        statusLabel.setText(ribbonHover, juce::dontSendNotification);
-        statusLabel.setColour(juce::Label::textColourId, juce::Colour(0xff646c78));
-        return;
-    }
     if (hover.isNotEmpty()) {
         statusLabel.setText(hover, juce::dontSendNotification);
         statusLabel.setColour(juce::Label::textColourId, juce::Colour(0xff646c78));
@@ -249,23 +235,6 @@ void MidisheetAudioProcessorEditor::timerCallback()
         fitHeightToRows();
     }
 
-    // Ribbon hover text: walk from the hovered component up through its
-    // SettableTooltipClient ancestors and fall back to the control's label
-    // (Button/ComboBox/ToggleButton/DragField value). Empty for components
-    // that's aren't providing any kind of hint.
-    juce::String hover;
-    if (auto* c = juce::Desktop::getInstance().findComponentAt(juce::Desktop::getInstance().getMousePosition())) {
-        for (auto* p = c; p != nullptr && p != &ribbon; p = p->getParentComponent()) {
-            if (auto* stc = dynamic_cast<juce::SettableTooltipClient*>(p))
-                if (stc->getTooltip().isNotEmpty()) { hover = stc->getTooltip(); break; }
-            if (auto* b = dynamic_cast<juce::Button*>(p)) { hover = b->getButtonText(); break; }
-            if (auto* cb = dynamic_cast<juce::ComboBox*>(p)) { hover = cb->getText(); break; }
-        }
-    }
-    if (ribbonHover != hover) {
-        ribbonHover = hover;
-        updateStatus();
-    }
 }
 
 void MidisheetAudioProcessorEditor::fitHeightToRows()

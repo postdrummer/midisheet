@@ -64,9 +64,8 @@ StepResult evaluateStep(const CompiledSheet& sheet, int patternStep, const StepI
             case ColumnType::Gate:
                 r.gate = value / 100.0; // gate columns are in percent
                 break;
-            case ColumnType::Length:
-                r.length = value;
-                ctx.set(formula::Var::Length, r.length);
+            case ColumnType::Repeat:
+                // Repeat is handled at scheduling time, not per-note
                 break;
             default:
                 break; // Time drives scheduling in rowSlot(); Chance and CC are handled in fireRow()

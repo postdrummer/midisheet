@@ -20,13 +20,19 @@
  *     Up order); the formula behind the active cell is in the formula bar
  *   - the playing row is highlighted (tracker-style playhead)
  *
- * Keys (vim + spreadsheet):
- *   h j k l / arrows   move            gg / G        first / last step
- *   Ctrl-d / Ctrl-u    half page       Tab / S-Tab   next / previous column
- *   Shift + move/click extends the selection (like a range in a sheet)
- *   i  a  Enter  F2    edit formula    = 0-9 - .     type a new formula
- *   x  Delete  Bksp    clear           Space         toggle step on/off
- *   y / p, Cmd-C / V   copy / paste    u / Cmd-Z     undo / redo
+ * Keys (spreadsheet-style, all letter commands require a modifier):
+ *   arrows / Tab / S-Tab  move / next / previous column
+ *   PageUp / PageDown     page up / down
+ *   Home / End            first / last step
+ *   Enter / F2            edit formula
+ *   Delete / Backspace    clear selection
+ *   Space                 toggle step on/off
+ *   = 0-9 - .             type a new formula (spreadsheet-style)
+ *   Cmd/Ctrl+C / X / V    copy / cut / paste
+ *   Cmd/Ctrl+Z            undo
+ *   Cmd/Ctrl+Shift+Z      redo
+ *   Cmd/Ctrl+Shift+= / -  add / delete rows or columns
+ *   Escape                collapse selection to single cell
  */
 class TrackerGrid : public juce::Component, private juce::Timer, public juce::SettableTooltipClient {
 public:
@@ -72,8 +78,13 @@ public:
     // 1 = formulas only, 2 = numeric values only.
     void setPasteMode(int m) { pasteMode_ = m; }
 
-    // Perform a sheet mutation through the undo path. Public so the
-    // editor's Columns ribbon can reuse it.
+    // Direct cell editing
+    bool isEditing() const { return editing; }
+    void startEditing(const juce::String& initial);
+    void commitEdit();
+    void cancelEdit();
+
+    // Perform a sheet mutation through the undo path.
     void performEdit(const std::function<void()>& change) { edit(change); }
     void selectCell(int newRow, int newCol, bool extend = false) { select(newRow, newCol, extend); }
     std::pair<int, int> selRows() const; // normalized selection rectangle
@@ -102,8 +113,6 @@ public:
     int rowH() const { return std::max(8, static_cast<int>(22.0f * zoom)); }
     int colX(int c, int width, int numCols) const;
     int colW(int c, int width, int numCols) const;
-
-    int lastColumnDragFrom() const { return colDragFrom; }
 
 private:
     struct Preview {
@@ -134,7 +143,6 @@ private:
     int selRowEnd = 0, selColEnd = 0; // other corner of the selection
     int lastStripSel = 0; // 1 = last selection was via row strip, 2 = via header
     int seenVersion = -1, seenStep = -2;
-    bool pendingG = false;
     juce::String clipboard; // TSV: formula-or-value per cell
 
     // Column drag-to-reorder state.
@@ -151,6 +159,11 @@ private:
 
     juce::String currentHoverStatus; // updated by mouseMove/mouseExit
     int pasteMode_ = 0;
+
+    // Direct cell editing state
+    bool editing = false;
+    juce::String editBuffer;
+    juce::String originalFormula;
 
     // Preview per step per column (only visible columns are stored).
     std::vector<std::vector<Preview>> preview; // [row][col]

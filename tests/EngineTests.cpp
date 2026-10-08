@@ -75,10 +75,7 @@ CompiledSheet makeSheet(const char* velocity = "", const char* note = "", const 
         int c = sheet.findColumnByType(ColumnType::Gate, false);
         if (c >= 0) sheet.setColumnDefaultFormula(c, gate);
     }
-    if (*length) {
-        int c = sheet.findColumnByType(ColumnType::Length, false);
-        if (c >= 0) sheet.setColumnDefaultFormula(c, length);
-    }
+    (void)length; // Length column removed; note length now comes from settings.length
     juce::StringArray errors;
     auto compiled = sheet.compile(errors);
     CHECK(errors.isEmpty());
@@ -141,7 +138,7 @@ void testNotesBalanced()
 {
     // Regression: note-offs were scheduled past the end of the block.
     auto e = held({60, 64, 67});
-    auto sheet = makeSheet("", "", "", "=IF(MOD(STEP,8)=7,2,1)");
+    auto sheet = makeSheet();
     std::vector<Event> events = run(e, sheet, 48000);
     e.noteOff(1, 60); e.noteOff(1, 64); e.noteOff(1, 67);
     std::vector<MidiOut> out;
@@ -157,8 +154,8 @@ void testGateAndLength()
 {
     auto e = held({60});
     e.settings.gate = 0.5;
-    auto events = run(e, makeSheet("", "", "", "=IF(STEP=1,2,1)"), 6000 * 2);
-    // step 0: 0..3000 ; step 1: length 2 * gate 0.5 = one full step, 6000..12000
+    auto events = run(e, makeSheet("", "", "=50"), 6000 * 2);
+    // step 0: 0..3000 ; step 1 starts at 6000 and ends at 9000 (gate 50%)
     CHECK(events.size() >= 3);
     CHECK(!events[1].on && events[1].sample == 3000);
     auto e2 = held({60});

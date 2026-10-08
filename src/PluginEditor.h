@@ -3,7 +3,6 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "PluginProcessor.h"
 #include "TrackerGrid.h"
-#include "Ribbon.h"
 #include "TopPanel.h"
 
 // Formula bar TextEditor that yields nav keys to the suggestions popup when
@@ -69,10 +68,6 @@ private:
 
     MidisheetAudioProcessor& processorRef;
 
-    // Ribbon hover text; refreshed by the focus sampler tick and reported
-    // through the status bar.
-    juce::String ribbonHover;
-
     // Top-of-editor controls (enabled/mode/rate + step sliders) were removed
     // for now. The APVTS parameters remain in the host layout and the engine
     // still reads them in syncSettings(), so automation/defaults still work.
@@ -81,8 +76,6 @@ private:
     FormulaEditor formulaBar;      // formula of the selected cell
     juce::Label statusLabel;       // compile error / contextual info / Ready
     TrackerGrid grid;
-    juce::TooltipWindow tooltipWindow { this, 300 }; // enables setTooltip() below
-    Ribbon ribbon;
     TopPanel topPanel { processorRef, grid, statusLabel };
 
     SuggestionsBox acBox;

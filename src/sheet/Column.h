@@ -31,10 +31,9 @@ enum class ColumnType : uint8_t {
     Octave,   // octave shift (value * 12 semitones)
     Velocity, // 0..127; <=0 = use incoming note velocity
     Gate,     // 0..100 percent of the step
-    Length,   // note length in steps
-    Percent,  // 0..100
     Chance,   // 0..100 probability
     Time,     // beat offset / subdivision position
+    Repeat,   // repeat an on note x times
     CC,       // MIDI CC: cell value is the CC value, ccNumber selects the CC
     Text,     // label / annotation (not evaluated)
     Formula,  // formula-only column (a modulation source)
@@ -50,10 +49,9 @@ inline const char* columnTypeName(ColumnType t)
         case ColumnType::Octave: return "Octave";
         case ColumnType::Velocity: return "Velocity";
         case ColumnType::Gate: return "Gate";
-        case ColumnType::Length: return "Length";
-        case ColumnType::Percent: return "Percent";
         case ColumnType::Chance: return "Chance";
         case ColumnType::Time: return "Time";
+        case ColumnType::Repeat: return "Repeat";
         case ColumnType::CC: return "CC";
         case ColumnType::Text: return "Text";
         case ColumnType::Formula: return "Formula";

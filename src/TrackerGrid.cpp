@@ -142,6 +142,35 @@ void TrackerGrid::toggleStep(int r)
     });
 }
 
+// ---------------------------------------------------------------------------
+// Direct cell editing
+
+void TrackerGrid::startEditing(const juce::String& initial)
+{
+    if (col < 1) return;
+    editing = true;
+    editBuffer = initial;
+    originalFormula = cellFormula();
+    repaint();
+}
+
+void TrackerGrid::commitEdit()
+{
+    if (!editing) return;
+    editing = false;
+    setCellFormula(editBuffer);
+    editBuffer.clear();
+    repaint();
+}
+
+void TrackerGrid::cancelEdit()
+{
+    if (!editing) return;
+    editing = false;
+    editBuffer.clear();
+    repaint();
+}
+
 void TrackerGrid::undo()
 {
     if (undoStack.empty())
@@ -406,14 +435,10 @@ void TrackerGrid::refresh()
                         pv.text = val < 0 ? "---" : juce::String(juce::roundToInt(val));
                         break;
                     case arp::ColumnType::Chance:
-                        pv.text = juce::String(juce::roundToInt(val));
-                        break;
-                    case arp::ColumnType::Gate:
-                    case arp::ColumnType::Percent:
                         pv.text = juce::String(juce::roundToInt(val)) + "%";
                         break;
-                    case arp::ColumnType::Length:
-                        pv.text = juce::String(val, val == std::floor(val) ? 0 : 2);
+                    case arp::ColumnType::Gate:
+                        pv.text = juce::String(juce::roundToInt(val)) + "%";
                         break;
                     default:
                         pv.text = juce::String(val, val == std::floor(val) ? 0 : 2);
@@ -615,7 +640,12 @@ void TrackerGrid::paint(juce::Graphics& g)
         for (int c = 0; c < numCols; ++c) {
             const int x = colX(c + 1, w, numCols);
             const int cw = colW(c + 1, w, numCols);
-        const auto& pv = preview[static_cast<size_t>(r)][static_cast<size_t>(c)];
+            auto pv = preview[static_cast<size_t>(r)][static_cast<size_t>(c)];
+            if (editing && r == row && c + 1 == col) {
+                pv.text = editBuffer;
+                pv.isError = false;
+                pv.isDefault = false;
+            }
 
             juce::Rectangle<int> cell(x, y, cw, rowH());
             const bool inSel = r >= sr0 && r <= sr1 && (c + 1) >= sc0 && (c + 1) <= sc1;
@@ -719,8 +749,31 @@ bool TrackerGrid::keyPressed(const juce::KeyPress& key)
     const auto mods = key.getModifiers();
     const auto ch = key.getTextCharacter();
     const int code = key.getKeyCode();
-    const bool wasG = std::exchange(pendingG, false);
     const bool shift = mods.isShiftDown();
+
+    // While editing, intercept all key input for the cell text.
+    if (editing) {
+        if (key == juce::KeyPress::returnKey || key == juce::KeyPress::tabKey) {
+            commitEdit();
+            return true;
+        }
+        if (key == juce::KeyPress::escapeKey) {
+            cancelEdit();
+            return true;
+        }
+        if (key == juce::KeyPress::backspaceKey) {
+            if (!editBuffer.isEmpty())
+                editBuffer = editBuffer.dropLastCharacters(1);
+            repaint();
+            return true;
+        }
+        if (ch >= 32 && ch < 127) {
+            editBuffer += juce::String::charToString(ch);
+            repaint();
+            return true;
+        }
+        return true; // consume all other keys while editing
+    }
 
     auto requestEdit = [this](const juce::String& initial) {
         if (col >= 1 && onEditRequested)
@@ -743,8 +796,6 @@ bool TrackerGrid::keyPressed(const juce::KeyPress& key)
             const auto selC = selCols();
             const int sr0 = selR.first, sr1 = selR.second;
             const int sc0 = selC.first, sc1 = selC.second;
-            const bool wholeCols = (sc1 - sc0 + 1) >= nc && (sr0 == 0 && sr1 + 1 >= nr);
-            (void)wholeCols;
             if (kind == 2 || (kind == 0 && (sc1 - sc0 + 1) < (sr1 - sr0 + 1))) {
                 // Column path.
                 const int count = sc1 - sc0 + 1; // number of columns
@@ -819,38 +870,29 @@ bool TrackerGrid::keyPressed(const juce::KeyPress& key)
         return false; // leave other shortcuts to the host
 
     if (key == juce::KeyPress::escapeKey) { select(row, col, false); return true; }
-    if (key == juce::KeyPress::upKey || ch == 'k') { select(row - 1, col, shift); return true; }
-    if (key == juce::KeyPress::downKey || ch == 'j') { select(row + 1, col, shift); return true; }
-    if (key == juce::KeyPress::leftKey || ch == 'h') { select(row, col - 1, shift); return true; }
-    if (key == juce::KeyPress::rightKey || ch == 'l') { select(row, col + 1, shift); return true; }
+    if (key == juce::KeyPress::upKey) { select(row - 1, col, shift); return true; }
+    if (key == juce::KeyPress::downKey) { select(row + 1, col, shift); return true; }
+    if (key == juce::KeyPress::leftKey) { select(row, col - 1, shift); return true; }
+    if (key == juce::KeyPress::rightKey) { select(row, col + 1, shift); return true; }
     if (key == juce::KeyPress::tabKey) { select(row, col + (shift ? -1 : 1), shift); return true; }
     if (key == juce::KeyPress::pageUpKey) { select(row - visibleRows(), col, shift); return true; }
     if (key == juce::KeyPress::pageDownKey) { select(row + visibleRows(), col, shift); return true; }
     if (key == juce::KeyPress::homeKey) { select(0, col, shift); return true; }
-    if (key == juce::KeyPress::endKey || ch == 'G') { select(numActiveSteps() - 1, col, shift); return true; }
-    if (ch == 'g') {
-        if (wasG)
-            select(0, col, shift);
-        else
-            pendingG = true;
-        return true;
-    }
+    if (key == juce::KeyPress::endKey) { select(numActiveSteps() - 1, col, shift); return true; }
 
     if (ch == ' ') { toggleStep(row); return true; }
-    if (ch == 'u') { undo(); return true; }
-    if (ch == 'y') { copySelection(); return true; }
-    if (ch == 'p') { pasteIntoSelection(); return true; }
-    if (ch == 'x' || key == juce::KeyPress::deleteKey || key == juce::KeyPress::backspaceKey) {
+    if (key == juce::KeyPress::deleteKey || key == juce::KeyPress::backspaceKey) {
         if (col >= 1)
             clearSelection();
         return true;
     }
-    if (ch == 'i' || ch == 'a' || key == juce::KeyPress::returnKey || key == juce::KeyPress::F2Key) {
+    if (key == juce::KeyPress::returnKey || key == juce::KeyPress::F2Key) {
         requestEdit(cellFormula());
         return true;
     }
-    if (ch == '=' || ch == '-' || ch == '.' || juce::CharacterFunctions::isDigit(ch)) {
-        requestEdit(juce::String::charToString(ch)); // spreadsheet-style: typing replaces
+    // Start editing on any printable character (spreadsheet-style: typing replaces)
+    if (ch >= 32 && ch < 127) {
+        startEditing(juce::String::charToString(ch));
         return true;
     }
     return false;
@@ -858,6 +900,9 @@ bool TrackerGrid::keyPressed(const juce::KeyPress& key)
 
 void TrackerGrid::mouseDown(const juce::MouseEvent& e)
 {
+    if (editing)
+        commitEdit();
+
     grabKeyboardFocus();
     dragStart = e.position;
     colDragOver = -1;
@@ -1234,9 +1279,7 @@ void TrackerGrid::mouseDrag(const juce::MouseEvent& e)
                 case arp::ColumnType::Octave: lo(-8, 8); break;
                 case arp::ColumnType::Velocity: lo(0, 127); break;
                 case arp::ColumnType::Gate: lo(0, 100); break;
-                case arp::ColumnType::Percent: lo(0, 100); break;
                 case arp::ColumnType::Chance: lo(0, 100); break;
-                case arp::ColumnType::Length: lo(0, 128); break;
                 case arp::ColumnType::Time: lo(-4, 4); break;
                 case arp::ColumnType::CC: lo(0, 127); break;
                 default: v = juce::jlimit(-10000.0, 10000.0, v); break;
@@ -1292,6 +1335,15 @@ void TrackerGrid::mouseUp(const juce::MouseEvent&)
 
 void TrackerGrid::mouseDoubleClick(const juce::MouseEvent& e)
 {
+    // Double-clicking a cell starts editing with its current content.
+    if (e.position.y >= headerH()) {
+        int r, c;
+        if (cellAt(e.position, r, c) && c >= 1) {
+            startEditing(cellFormula());
+            return;
+        }
+    }
+
     // Double-clicking a column header renames that column.
     if (e.position.y < headerH()) {
         int c = -1; bool onCol = false;

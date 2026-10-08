@@ -19,7 +19,6 @@ static double emptyComboValue(arp::ColumnType t)
     switch (t) {
         case arp::ColumnType::Note: return 1.0;
         case arp::ColumnType::Pitch: return -1.0;
-        case arp::ColumnType::Length: return 1.0;
         case arp::ColumnType::Time: return 0.0;
         default: return 0.0;
     }
@@ -69,15 +68,14 @@ TopPanel::TopPanel(MidisheetAudioProcessor& p, TrackerGrid& g, juce::Label& info
     struct RowSpec { const char* label; arp::ColumnType type; bool combo; };
     const RowSpec specs[] = {
         { "Note",     arp::ColumnType::Note,     true  }, // boolean On/Off with empty=on
-        { "Pitch",    arp::ColumnType::Pitch,    true  }, // combo of note names
-        { "Chance",   arp::ColumnType::Chance,   false },
-        { "Velocity", arp::ColumnType::Velocity, false },
-        { "Gate",     arp::ColumnType::Gate,     false },
-        { "Length",   arp::ColumnType::Length,   true  }, // combo of step lengths
-        { "Shift",   arp::ColumnType::Shift,    false },
-        { "Time",     arp::ColumnType::Time,     true  }, // combo of divisions
+        { "Pitch",    arp::ColumnType::Pitch,    true  }, // combo: Midi In + note names
+        { "Velocity", arp::ColumnType::Velocity, true  }, // combo: Midi In + 0-128
+        { "Gate",     arp::ColumnType::Gate,     false }, // text box + %
+        { "Chance",   arp::ColumnType::Chance,   false }, // text box + %
+        { "Shift",    arp::ColumnType::Shift,    false },
         { "Octave",   arp::ColumnType::Octave,   false },
-        { "Percent",  arp::ColumnType::Percent,  false },
+        { "Time",     arp::ColumnType::Time,     true  }, // two combos: style + division
+        { "Repeat",   arp::ColumnType::Repeat,   true  }, // combo: 1-16
     };
     for (const auto& s : specs) {
         TypeRow row;
@@ -97,27 +95,45 @@ TopPanel::TopPanel(MidisheetAudioProcessor& p, TrackerGrid& g, juce::Label& info
                     applyDefault(t, idx == 1 ? 0.0 : 1.0);
                 };
             } else if (s.type == arp::ColumnType::Pitch) {
-                row.combo->addItem("Empty", 1);
+                row.combo->addItem("Midi In", 1);
                 for (int n = 0; n < 128; ++n)
                     row.combo->addItem(juce::MidiMessage::getMidiNoteName(n, true, true, 4), n + 2);
                 row.combo->onChange = [this, t = s.type, cb = row.combo.get()] {
                     const int idx = cb->getSelectedItemIndex();
                     applyDefault(t, idx <= 0 ? emptyComboValue(t) : (double)(idx - 1));
                 };
-            } else if (s.type == arp::ColumnType::Length) {
-                row.combo->addItem("Empty", 1); // factory default (1 step)
-                for (int i = 2; i <= 16; ++i) row.combo->addItem(juce::String(i) + " steps", i + 1);
+            } else if (s.type == arp::ColumnType::Velocity) {
+                row.combo->addItem("Midi In", 1);
+                for (int i = 0; i <= 128; ++i)
+                    row.combo->addItem(juce::String(i), i + 2);
                 row.combo->onChange = [this, t = s.type, cb = row.combo.get()] {
                     const int idx = cb->getSelectedItemIndex();
-                    applyDefault(t, idx <= 0 ? emptyComboValue(t) : (double)(idx + 1));
+                    applyDefault(t, idx <= 0 ? emptyComboValue(t) : (double)(idx - 1));
                 };
             } else if (s.type == arp::ColumnType::Time) {
-                row.combo->addItem("Empty", 1);
+                // Two combos: style (Even/Dotted/Triplet) + division (1/1..1/32)
+                row.combo->addItem("Even", 1);
+                row.combo->addItem("Dotted", 2);
+                row.combo->addItem("Triplet", 3);
+                row.combo->onChange = [this, t = s.type, cb = row.combo.get(), row2 = &row] {
+                    // Style change — division stays the same
+                    const int divIdx = row2->combo2 ? row2->combo2->getSelectedItemIndex() : 0;
+                    applyDefault(t, divIdx);
+                };
+                row.combo2 = std::make_unique<DragCombo>();
                 const char* divs[] = { "1/1", "1/2", "1/4", "1/8", "1/16", "1/32" };
-                for (int i = 0; i < 6; ++i) row.combo->addItem(divs[i], i + 2);
+                for (int i = 0; i < 6; ++i) row.combo2->addItem(divs[i], i + 1);
+                row.combo2->onChange = [this, t = s.type, cb = row.combo2.get()] {
+                    const int idx = cb->getSelectedItemIndex();
+                    applyDefault(t, idx);
+                };
+                addAndMakeVisible(*row.combo2);
+            } else if (s.type == arp::ColumnType::Repeat) {
+                for (int i = 1; i <= 16; ++i)
+                    row.combo->addItem(juce::String(i), i);
                 row.combo->onChange = [this, t = s.type, cb = row.combo.get()] {
                     const int idx = cb->getSelectedItemIndex();
-                    applyDefault(t, idx <= 0 ? emptyComboValue(t) : (double) idx);
+                    if (idx >= 0) applyDefault(t, (double)(idx + 1));
                 };
             }
             addAndMakeVisible(*row.combo);
@@ -126,15 +142,16 @@ TopPanel::TopPanel(MidisheetAudioProcessor& p, TrackerGrid& g, juce::Label& info
             row.text->setFont(monoFont());
             row.text->setColour(juce::TextEditor::backgroundColourId, juce::Colour(0xff1e2127));
             row.text->setColour(juce::TextEditor::textColourId, juce::Colour(0xffe6e9ee));
-            row.text->onReturnKey = [this, t = s.type, te = row.text.get()] {
-                const auto text = te->getText().trim();
+            const bool isPercent = (s.type == arp::ColumnType::Gate || s.type == arp::ColumnType::Chance);
+            row.text->onReturnKey = [this, t = s.type, te = row.text.get(), isPercent] {
+                auto text = te->getText().trim();
+                if (isPercent) text = text.replace("%", "").trim();
                 if (text.isNotEmpty()) applyDefault(t, text.getDoubleValue());
             };
             addAndMakeVisible(*row.text);
         }
         defaultRows.push_back(std::move(row));
     }
-    // (labels are created+added in buildDefaultsRow during layout via infos)
     for (auto& r : defaultRows) {
         watchHover(r.combo ? static_cast<juce::Component&>(*r.combo) : static_cast<juce::Component&>(*r.text),
                    "Default value used when a cell in this column type is empty.");
@@ -249,12 +266,6 @@ void TopPanel::applyDefault(arp::ColumnType type, double value)
     grid.repaint();
 }
 
-void TopPanel::buildDefaultsRow(TypeRow& row, int x, int y, int w)
-{
-    // Layout helper used from resized(); labels handled there too.
-    (void)row; (void)x; (void)y; (void)w;
-}
-
 void TopPanel::refreshDefaultsRow(TypeRow& row) const
 {
     double v = 0.0; bool found = false;
@@ -267,17 +278,30 @@ void TopPanel::refreshDefaultsRow(TypeRow& row) const
             idx = (v < 0.5) ? 1 : 0;
         else if (row.type == arp::ColumnType::Pitch)
             idx = (v < 0) ? 0 : (int) v + 1;
-        else if (row.type == arp::ColumnType::Length)
-            idx = (v <= 1) ? 0 : (int) v - 1;
+        else if (row.type == arp::ColumnType::Velocity)
+            idx = (v < 0) ? 0 : (int) v + 1;
         else if (row.type == arp::ColumnType::Time)
-            idx = (v <= 0) ? 0 : (int) v;
+            idx = (v <= 0) ? 4 : (int) v; // default to 1/16 (index 4)
+        else if (row.type == arp::ColumnType::Repeat)
+            idx = (int) v - 1;
         idx = juce::jlimit(0, row.combo->getNumItems() - 1, idx);
         row.combo->setSelectedItemIndex(idx, juce::dontSendNotification);
-        // Force the internal combo text label to re-derive its font so "Empty" can render italicised.
         row.combo->resized();
-
+        // Sync the second Time combo (division)
+        if (row.combo2) {
+            int divIdx = 4; // 1/16
+            if (row.type == arp::ColumnType::Time && v > 0)
+                divIdx = (int) v;
+            divIdx = juce::jlimit(0, row.combo2->getNumItems() - 1, divIdx);
+            row.combo2->setSelectedItemIndex(divIdx, juce::dontSendNotification);
+            row.combo2->resized();
+        }
     } else {
-        row.text->setText(juce::String(v, v == std::floor(v) ? 0 : 2), juce::dontSendNotification);
+        const bool isPercent = (row.type == arp::ColumnType::Gate || row.type == arp::ColumnType::Chance);
+        const juce::String text = isPercent
+            ? juce::String(juce::roundToInt(v)) + "%"
+            : juce::String(v, v == std::floor(v) ? 0 : 2);
+        row.text->setText(text, juce::dontSendNotification);
     }
 }
 
@@ -350,8 +374,18 @@ void TopPanel::resized()
         const int x = defR.getX() + (leftCol ? 0 : half);
         int& y = leftCol ? dyL : dyR;
         row.labelComp->setBounds(x, y, 72, kBtnH);
-        if (row.text) row.text->setBounds(x + 72, y, 92, kBtnH);
-        if (row.combo) row.combo->setBounds(x + 72, y, 92, kBtnH);
+        if (row.text) {
+            row.text->setBounds(x + 72, y, 92, kBtnH);
+        }
+        if (row.combo) {
+            if (row.combo2) {
+                // Time row: two combos side by side
+                row.combo->setBounds(x + 72, y, 70, kBtnH);
+                row.combo2->setBounds(x + 142, y, 70, kBtnH);
+            } else {
+                row.combo->setBounds(x + 72, y, 92, kBtnH);
+            }
+        }
         y += kBtnH + kGap;
     }
 

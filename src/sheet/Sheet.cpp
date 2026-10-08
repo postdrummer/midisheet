@@ -37,7 +37,8 @@ int Sheet::addColumn(ColumnType type, const std::string& name)
     c.defaultValue = type == ColumnType::Velocity ? -1.0 // <0 = pass the incoming velocity through
                         : type == ColumnType::Pitch ? -1.0 // <0 = pass the incoming note's pitch through
                         : type == ColumnType::Note ? 1.0   // boolean gate: empty cells default to on
-                        : type == ColumnType::Percent || type == ColumnType::Chance ? 100.0
+                        : type == ColumnType::Chance ? 100.0
+                        : type == ColumnType::Repeat ? 1.0
                         : 0.0;
     columns_.push_back(c);
     values_.emplace_back(static_cast<size_t>(kMaxRows), 0.0);
@@ -497,9 +498,9 @@ void Sheet::setupDefaultSheet()
     add(ColumnType::Shift, "Shift", true, 0.0);
     add(ColumnType::Octave, "Octave", true, 0.0);
     add(ColumnType::Velocity, "Velocity", true, -1.0); // visible, but <0 passes the incoming velocity through
-    add(ColumnType::Gate, "Gate", true, 50.0);
-    add(ColumnType::Length, "Length", true, 1.0, "=IF(MOD(STEP,8)=7,2,1)");
+    add(ColumnType::Gate, "Gate", true, 100.0);
     add(ColumnType::Time, "Time", false, 0.0);
+    add(ColumnType::Repeat, "Repeat", false, 1.0);
     add(ColumnType::Chance, "Chance", false, 100.0);
 
     // All steps active by default.

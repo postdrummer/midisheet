@@ -47,8 +47,8 @@ private:
 };
 
 
-// Top panel replacing the ribbon: File | Defaults | Edit groups over an
-// info-bar that briefly explains whatever control is hovered.
+// Top panel: File | Defaults | Edit groups over an info-bar that briefly
+// explains whatever control is hovered.
 class TopPanel final : public juce::Component, private juce::Timer
 {
 public:
@@ -71,9 +71,9 @@ private:
         std::unique_ptr<juce::Label> labelComp;
         std::unique_ptr<juce::TextEditor> text; // numeric text box
         std::unique_ptr<juce::ComboBox> combo;  // dropdown variant
+        std::unique_ptr<juce::ComboBox> combo2; // second dropdown (for Time)
     };
 
-    void buildDefaultsRow(TypeRow& row, int x, int y, int w);
     void applyDefault(arp::ColumnType type, double value);
     void refreshDefaultsRow(TypeRow& row) const;
 

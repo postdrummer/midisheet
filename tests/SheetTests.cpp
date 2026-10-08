@@ -247,15 +247,15 @@ void testStepActive()
 void testDefaultSheet()
 {
     Sheet sheet;
-    // Should have Note, Shift, Octave, Velocity, Gate, Length, Time, Chance.
+    // Should have Pitch, Shift, Octave, Velocity, Gate, Time, Chance, Repeat.
     CHECK(sheet.findColumnByType(ColumnType::Pitch, false) >= 0);
     CHECK(sheet.findColumnByType(ColumnType::Shift, false) >= 0);
     CHECK(sheet.findColumnByType(ColumnType::Octave, false) >= 0);
     CHECK(sheet.findColumnByType(ColumnType::Velocity, false) >= 0);
     CHECK(sheet.findColumnByType(ColumnType::Gate, false) >= 0);
-    CHECK(sheet.findColumnByType(ColumnType::Length, false) >= 0);
     CHECK(sheet.findColumnByType(ColumnType::Time, false) >= 0);
     CHECK(sheet.findColumnByType(ColumnType::Chance, false) >= 0);
+    CHECK(sheet.findColumnByType(ColumnType::Repeat, false) >= 0);
 
     // Time/Chance start hidden, so a visibility-filtered lookup finds
     // nothing for them; an unfiltered lookup now finds them too.
