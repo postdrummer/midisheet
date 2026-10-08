@@ -58,6 +58,7 @@ public:
     void paint(juce::Graphics&) override;
     void resized() override;
     void refreshFromSheet(); // re-reads defaults + active column type
+    void save();             // overwrite current file or prompt
     void pickFile(bool save);
 
 private:
@@ -84,7 +85,7 @@ private:
     // --- groups ---
     juce::Label fileTitle, defaultsTitle, editTitle;
     // File
-    juce::TextButton restoreBtn, loadBtn, saveBtn, saveAsBtn;
+    juce::TextButton undoBtn, redoBtn, restoreBtn, loadBtn, saveBtn, saveAsBtn;
     // Defaults (two columns of rows)
     std::vector<TypeRow> defaultRows;
     std::unique_ptr<juce::FileChooser> fileChooser_;
@@ -97,6 +98,7 @@ private:
 
     int seenSheetVersion = -1;
     std::vector<std::unique_ptr<juce::MouseListener>> hoverListeners;
+    juce::File currentFile; // tracks the current save file for overwrite
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(TopPanel)
 };

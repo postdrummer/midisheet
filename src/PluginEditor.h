@@ -65,6 +65,7 @@ private:
     void showSelectedCell();
     void commitFormula();
     void updateStatus();
+    void hideStandaloneOptionsButton();
 
     MidisheetAudioProcessor& processorRef;
 

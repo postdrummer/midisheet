@@ -51,6 +51,7 @@ public:
     std::function<void(const juce::String& initialText)> onEditRequested;
 
     std::function<void(const juce::String&)> onHoverStatus;
+    std::function<void()> onSaveRequested;
     juce::String hoverStatusText() const { return currentHoverStatus; }
     juce::String activeCellValueText() const;
 
@@ -71,6 +72,7 @@ public:
     void copySelection();
     void pasteIntoSelection();
     void clearSelection();
+    void deleteSelection(); // context-sensitive: cells, rows, or columns
     void copyRowText(int r);
     void pasteRowText(int r);
 

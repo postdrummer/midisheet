@@ -32,13 +32,17 @@ TopPanel::TopPanel(MidisheetAudioProcessor& p, TrackerGrid& g, juce::Label& info
     for (auto* l : { &fileTitle, &defaultsTitle, &editTitle }) { l->setFont(monoFont(14.0f).boldened()); l->setColour(juce::Label::textColourId, juce::Colour(0xffe0b050)); addAndMakeVisible(l); }
 
     // ---- File ----
+    undoBtn.setButtonText("Undo");
+    redoBtn.setButtonText("Redo");
+    undoBtn.onClick = [this] { grid.undo(); };
+    redoBtn.onClick = [this] { grid.redo(); };
     restoreBtn.setButtonText("Restore Defaults");
     loadBtn.setButtonText("Load");
     saveBtn.setButtonText("Save");
     saveAsBtn.setButtonText("Save As...");
     restoreBtn.onClick = [this] {
         auto* w = new juce::AlertWindow("Restore Defaults",
-                                        "Replace the current sheet with the default sheet? This cannot be undone.",
+                                        "Would you like to restore defaults?",
                                         juce::MessageBoxIconType::WarningIcon);
         w->addButton("OK", 1);
         w->addButton("Cancel", 0);
@@ -54,12 +58,14 @@ TopPanel::TopPanel(MidisheetAudioProcessor& p, TrackerGrid& g, juce::Label& info
         }), false);
     };
     loadBtn.onClick = [this] { pickFile(false); };
-    saveBtn.onClick = [this] { pickFile(true); };
+    saveBtn.onClick = [this] { save(); };
     saveAsBtn.onClick = [this] { pickFile(true); };
-    for (auto* b : { &restoreBtn, &loadBtn, &saveBtn, &saveAsBtn }) { b->setColour(juce::TextButton::buttonColourId, juce::Colour(0xff2a2f38)); b->setColour(juce::TextButton::textColourOffId, juce::Colour(0xffe6e9ee)); style(*b); addAndMakeVisible(b); }
+    for (auto* b : { &undoBtn, &redoBtn, &restoreBtn, &loadBtn, &saveBtn, &saveAsBtn }) { b->setColour(juce::TextButton::buttonColourId, juce::Colour(0xff2a2f38)); b->setColour(juce::TextButton::textColourOffId, juce::Colour(0xffe6e9ee)); style(*b); addAndMakeVisible(b); }
+    watchHover(undoBtn, "Undo the last edit.");
+    watchHover(redoBtn, "Redo the last undone edit.");
     watchHover(restoreBtn, "Reset the sheet to the built-in default columns and content.");
     watchHover(loadBtn, "Load a sheet from a .json/.midisheet file.");
-    watchHover(saveBtn, "Save the current sheet to a file.");
+    watchHover(saveBtn, "Save the current sheet (Cmd/Ctrl+S).");
     watchHover(saveAsBtn, "Save the current sheet to a new file.");
 
     // ---- Defaults ----
@@ -92,7 +98,7 @@ TopPanel::TopPanel(MidisheetAudioProcessor& p, TrackerGrid& g, juce::Label& info
                 row.combo->addItem("Off", 2);
                 row.combo->onChange = [this, t = s.type, cb = row.combo.get()] {
                     const int idx = cb->getSelectedItemIndex();
-                    applyDefault(t, idx == 1 ? 0.0 : 1.0);
+                    applyDefault(t, idx == 0 ? 1.0 : 0.0);
                 };
             } else if (s.type == arp::ColumnType::Pitch) {
                 row.combo->addItem("Midi In", 1);
@@ -111,18 +117,17 @@ TopPanel::TopPanel(MidisheetAudioProcessor& p, TrackerGrid& g, juce::Label& info
                     applyDefault(t, idx <= 0 ? emptyComboValue(t) : (double)(idx - 1));
                 };
             } else if (s.type == arp::ColumnType::Time) {
-                // Two combos: style (Even/Dotted/Triplet) + division (1/1..1/32)
-                row.combo->addItem("Even", 1);
+                // Two independent combos: style (Equal/Dotted/Triplet) + division (1/1..1/28)
+                row.combo->addItem("Equal", 1);
                 row.combo->addItem("Dotted", 2);
                 row.combo->addItem("Triplet", 3);
                 row.combo->onChange = [this, t = s.type, cb = row.combo.get(), row2 = &row] {
-                    // Style change — division stays the same
-                    const int divIdx = row2->combo2 ? row2->combo2->getSelectedItemIndex() : 0;
+                    const int divIdx = row2->combo2 ? row2->combo2->getSelectedItemIndex() : 4;
                     applyDefault(t, divIdx);
                 };
                 row.combo2 = std::make_unique<DragCombo>();
-                const char* divs[] = { "1/1", "1/2", "1/4", "1/8", "1/16", "1/32" };
-                for (int i = 0; i < 6; ++i) row.combo2->addItem(divs[i], i + 1);
+                const char* divs[] = { "1/1", "1/2", "1/4", "1/8", "1/16", "1/32", "1/64", "1/28" };
+                for (int i = 0; i < 8; ++i) row.combo2->addItem(divs[i], i + 1);
                 row.combo2->onChange = [this, t = s.type, cb = row.combo2.get()] {
                     const int idx = cb->getSelectedItemIndex();
                     applyDefault(t, idx);
@@ -189,9 +194,7 @@ TopPanel::TopPanel(MidisheetAudioProcessor& p, TrackerGrid& g, juce::Label& info
     deleteBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff2a2f38));
     deleteBtn.setColour(juce::TextButton::textColourOffId, juce::Colour(0xffe6e9ee));
     deleteBtn.onClick = [this] {
-        const int dc = grid.getCol() - 1;
-        if (dc < 0) return;
-        grid.performEdit([this, dc] { proc.getSheet().deleteColumn(dc); });
+        grid.deleteSelection();
         refreshFromSheet();
     };
     mergeBtn.setButtonText("Merge");
@@ -200,7 +203,9 @@ TopPanel::TopPanel(MidisheetAudioProcessor& p, TrackerGrid& g, juce::Label& info
     mergeBtn.onClick = [this] {
         const int dc = grid.getCol() - 1;
         if (dc < 0) return;
-        const auto [r0, r1] = grid.selRows();
+        const auto sel = grid.selRows();
+        const int r0 = sel.first;
+        const int r1 = sel.second;
         if (r1 <= r0) return;
         grid.performEdit([this, dc, r0, r1] {
             auto& s = proc.getSheet();
@@ -243,6 +248,15 @@ TopPanel::TopPanel(MidisheetAudioProcessor& p, TrackerGrid& g, juce::Label& info
 
 TopPanel::~TopPanel() = default;
 
+void TopPanel::save()
+{
+    if (currentFile != juce::File{}) {
+        currentFile.replaceWithText(juce::JSON::toString(proc.getSheet().toVar(), true));
+    } else {
+        pickFile(true);
+    }
+}
+
 void TopPanel::pickFile(bool save)
 {
     fileChooser_ = std::make_unique<juce::FileChooser>(save ? "Save sheet" : "Load sheet", juce::File{}, "*.json *.midisheet");
@@ -250,8 +264,17 @@ void TopPanel::pickFile(bool save)
     fileChooser_->launchAsync(mode, [this, save](const juce::FileChooser& chooser) {
         const auto f = chooser.getResult();
         if (f == juce::File{}) return;
-        if (save) { f.replaceWithText(juce::JSON::toString(proc.getSheet().toVar(), true)); return; }
-        if (juce::var v; juce::JSON::parse(f.loadFileAsString(), v).wasOk()) { proc.getSheet().fromVar(v); proc.sheetChanged(); refreshFromSheet(); }
+        if (save) {
+            f.replaceWithText(juce::JSON::toString(proc.getSheet().toVar(), true));
+            currentFile = f;
+            return;
+        }
+        if (juce::var v; juce::JSON::parse(f.loadFileAsString(), v).wasOk()) {
+            proc.getSheet().fromVar(v);
+            currentFile = f;
+            proc.sheetChanged();
+            refreshFromSheet();
+        }
     });
 }
 
@@ -275,21 +298,21 @@ void TopPanel::refreshDefaultsRow(TypeRow& row) const
     if (row.combo) {
         int idx = 0;
         if (row.type == arp::ColumnType::Note)
-            idx = (v < 0.5) ? 1 : 0;
+            idx = (v >= 0.5) ? 0 : 1; // 1=On, 0=Off
         else if (row.type == arp::ColumnType::Pitch)
             idx = (v < 0) ? 0 : (int) v + 1;
         else if (row.type == arp::ColumnType::Velocity)
             idx = (v < 0) ? 0 : (int) v + 1;
         else if (row.type == arp::ColumnType::Time)
-            idx = (v <= 0) ? 4 : (int) v; // default to 1/16 (index 4)
+            idx = 0; // Default to "Equal" for style
         else if (row.type == arp::ColumnType::Repeat)
             idx = (int) v - 1;
         idx = juce::jlimit(0, row.combo->getNumItems() - 1, idx);
         row.combo->setSelectedItemIndex(idx, juce::dontSendNotification);
         row.combo->resized();
-        // Sync the second Time combo (division)
+        // Sync the second Time combo (division) — independent of style
         if (row.combo2) {
-            int divIdx = 4; // 1/16
+            int divIdx = 4; // Default to 1/16 (index 4)
             if (row.type == arp::ColumnType::Time && v > 0)
                 divIdx = (int) v;
             divIdx = juce::jlimit(0, row.combo2->getNumItems() - 1, divIdx);
@@ -334,7 +357,7 @@ void TopPanel::watchHover(juce::Component& c, const juce::String& info)
         juce::Label& bar; juce::String text;
         H(juce::Label& b, juce::String t) : bar(b), text(std::move(t)) {}
         void mouseEnter(const juce::MouseEvent&) override { bar.setText(text, juce::dontSendNotification); }
-        void mouseExit(const juce::MouseEvent&) override { bar.setText({}, juce::dontSendNotification); }
+        void mouseExit(const juce::MouseEvent&) override { bar.setText("Hover for info.", juce::dontSendNotification); }
     };
     auto h = std::make_unique<H>(infoBar, info);
     c.addMouseListener(h.get(), true);
@@ -363,7 +386,18 @@ void TopPanel::resized()
 
     auto fileR = group(fileTitle, 140);
     int fy = fileR.getY();
-    for (auto* b : { &restoreBtn, &loadBtn, &saveBtn, &saveAsBtn }) { b->setBounds(fileR.getX(), fy, fileR.getWidth(), kBtnH); fy += kBtnH + kGap; }
+    // Undo/Redo side by side
+    const int halfBtn = (fileR.getWidth() - kGap) / 2;
+    undoBtn.setBounds(fileR.getX(), fy, halfBtn, kBtnH);
+    redoBtn.setBounds(fileR.getX() + halfBtn + kGap, fy, halfBtn, kBtnH);
+    fy += kBtnH + kGap;
+    restoreBtn.setBounds(fileR.getX(), fy, fileR.getWidth(), kBtnH);
+    fy += kBtnH + kGap;
+    loadBtn.setBounds(fileR.getX(), fy, fileR.getWidth(), kBtnH);
+    fy += kBtnH + kGap;
+    // Save/Save As side by side
+    saveBtn.setBounds(fileR.getX(), fy, halfBtn, kBtnH);
+    saveAsBtn.setBounds(fileR.getX() + halfBtn + kGap, fy, halfBtn, kBtnH);
 
     auto defR = group(defaultsTitle, 340);
     const int half = 168;

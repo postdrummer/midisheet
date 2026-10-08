@@ -345,6 +345,54 @@ void TrackerGrid::pasteRowText(int r)
     });
 }
 
+void TrackerGrid::deleteSelection()
+{
+    const auto selR = selRows();
+    const auto selC = selCols();
+    const int sr0 = selR.first, sr1 = selR.second;
+    const int sc0 = selC.first, sc1 = selC.second;
+    const int numCols = proc.getSheet().getNumColumns();
+    const int numRows = proc.getSheet().getNumRows();
+
+    // Determine selection type:
+    // - Column selection: selRows covers all rows (header click)
+    // - Row selection: selCols covers all columns (row strip click)
+    // - Cell selection: anything else
+    const bool isColSel = (sr0 == 0 && sr1 == numRows - 1) && (sc1 > sc0 || sc0 == sc1);
+    const bool isRowSel = (sc0 == 1 && sc1 == numCols) && (sr1 > sr0 || sr0 == sr1);
+
+    if (isColSel) {
+        const int dc0 = sc0 - 1;
+        if (dc0 < 0) return;
+        const int count = sc1 - sc0 + 1;
+        performEdit([this, dc0, count] {
+            for (int i = 0; i < count; ++i)
+                proc.getSheet().deleteColumn(dc0);
+        });
+        const int total = proc.getSheet().getNumColumns() + 1;
+        col = juce::jlimit(1, total - 1, col);
+    } else if (isRowSel) {
+        const int count = sr1 - sr0 + 1;
+        performEdit([this, sr0, count] {
+            for (int i = 0; i < count; ++i)
+                proc.getSheet().deleteRow(sr0);
+        });
+        row = juce::jlimit(0, proc.getSheet().getNumRows() - 1, row);
+    } else {
+        // Cell selection: clear cells to blank
+        performEdit([this, sr0, sr1, sc0, sc1] {
+            auto& s = proc.getSheet();
+            for (int r = sr0; r <= sr1; ++r)
+                for (int c = sc0; c <= sc1; ++c)
+                    if (c >= 1)
+                        s.clearCell(c - 1, r);
+        });
+    }
+    repaint();
+    if (onSelectionChanged)
+        onSelectionChanged();
+}
+
 void TrackerGrid::clearSelection()
 {
     const auto rows = selRows();
@@ -860,6 +908,11 @@ bool TrackerGrid::keyPressed(const juce::KeyPress& key)
     }
     if (mods.isCommandDown() && code == 'Z') {
         undo();
+        return true;
+    }
+    if ((mods.isCommandDown() || mods.isCtrlDown()) && code == 'S') {
+        if (onSaveRequested)
+            onSaveRequested();
         return true;
     }
     if (mods.isCtrlDown() && (code == 'D' || code == 'U')) {

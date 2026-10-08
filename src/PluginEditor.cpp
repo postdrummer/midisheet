@@ -6,6 +6,8 @@ MidisheetAudioProcessorEditor::MidisheetAudioProcessorEditor(MidisheetAudioProce
 {
     static juce::SharpMonoLookAndFeel sharpLnf;
     juce::LookAndFeel::setDefaultLookAndFeel(&sharpLnf);
+    // The standalone window's "Options" button is hidden once we're attached
+    // to that window, see parentHierarchyChanged().
 
     // Formula bar
     const auto mono = juce::FontOptions("Iosevka Charon Mono", 17.0f, juce::Font::bold);
@@ -37,6 +39,7 @@ MidisheetAudioProcessorEditor::MidisheetAudioProcessorEditor(MidisheetAudioProce
 
     grid.onSelectionChanged = [this] { showSelectedCell(); };
     grid.onHoverStatus = [this](const juce::String&) { updateStatus(); };
+    grid.onSaveRequested = [this] { topPanel.save(); };
     grid.onEditRequested = [this](const juce::String& initial) {
         formulaBar.setText(initial, false);
         formulaBar.grabKeyboardFocus();
@@ -61,7 +64,27 @@ void MidisheetAudioProcessorEditor::visibilityChanged()
 
 void MidisheetAudioProcessorEditor::parentHierarchyChanged()
 {
+    hideStandaloneOptionsButton();
     visibilityChanged();
+}
+
+// The "Options" button lives in the standalone wrapper's title bar, not in the
+// editor, so it can only be reached after this editor has been attached to that
+// window. In a hosted plugin there is no DocumentWindow ancestor: no-op.
+void MidisheetAudioProcessorEditor::hideStandaloneOptionsButton()
+{
+    for (auto* c = getParentComponent(); c != nullptr; c = c->getParentComponent())
+    {
+        auto* window = dynamic_cast<juce::DocumentWindow*>(c);
+        if (window == nullptr)
+            continue;
+
+        for (auto* child : window->getChildren())
+            if (auto* button = dynamic_cast<juce::TextButton*>(child))
+                if (button->getButtonText() == "Options")
+                    button->setVisible(false);
+        return;
+    }
 }
 
 MidisheetAudioProcessorEditor::~MidisheetAudioProcessorEditor() {}

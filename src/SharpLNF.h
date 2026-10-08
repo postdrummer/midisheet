@@ -107,11 +107,57 @@ public:
         g.drawRect(0, 0, width, height, 1);
     }
 
-    void drawAlertBox(Graphics& g, AlertWindow& alert, const Rectangle<int>&, TextLayout&) override
+    void drawAlertBox(Graphics& g, AlertWindow& alert, const Rectangle<int>&, TextLayout& textToDraw) override
     {
-        g.fillAll(alert.findColour(AlertWindow::backgroundColourId));
-        g.setColour(alert.findColour(AlertWindow::backgroundColourId).contrasting(0.3f));
+        const auto bg = alert.findColour(AlertWindow::backgroundColourId);
+        g.setColour(bg);
+        g.fillRect(alert.getLocalBounds());
+        g.setColour(bg.contrasting(0.3f));
         g.drawRect(alert.getLocalBounds(), 1);
+
+        auto area = alert.getLocalBounds().reduced(10);
+
+        // AlertWindow reserves an 80px gutter on the left when an icon is shown.
+        if (alert.getAlertType() != MessageBoxIconType::NoIcon)
+            drawAlertIcon(g, alert, area.removeFromLeft(80));
+
+        // The OK/Cancel row sits at 95% of the window height: keep it clear.
+        int buttonTop = alert.getLocalBounds().getBottom();
+        for (int i = alert.getNumButtons(); --i >= 0;)
+            if (auto* b = alert.getButton(i))
+                buttonTop = jmin(buttonTop, b->getY());
+        area.removeFromBottom(jmax(0, alert.getLocalBounds().getBottom() - buttonTop + 10));
+
+        // AlertWindow::updateLayout packs the title and the message into one
+        // TextLayout - painting it is what actually shows the prompt's text.
+        g.setColour(alert.findColour(AlertWindow::textColourId));
+        textToDraw.draw(g, area.toFloat());
+    }
+
+    void drawAlertIcon(Graphics& g, const AlertWindow& alert, Rectangle<int> area)
+    {
+        if (alert.getAlertType() != MessageBoxIconType::WarningIcon)
+            return;
+
+        const float cx = (float) area.getCentreX();
+        const float top = (float) area.getY() + 6.0f;
+        const float halfW = 20.0f;
+        const float triH = 36.0f;
+
+        Path tri;
+        tri.startNewSubPath(cx, top);
+        tri.lineTo(cx + halfW, top + triH);
+        tri.lineTo(cx - halfW, top + triH);
+        tri.closeSubPath();
+
+        g.setColour(Colour(0xffe0b050));
+        g.fillPath(tri);
+
+        g.setColour(alert.findColour(AlertWindow::backgroundColourId));
+        g.setFont(mono(15.0f));
+        g.drawText("!",
+                   Rectangle<int>((int) cx - 8, (int) (top + triH * 0.34f), 16, (int) (triH * 0.62f)),
+                   Justification::centred, true);
     }
 
 private:
